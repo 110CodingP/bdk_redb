@@ -18,6 +18,12 @@ pub enum BdkRedbError {
 
     #[error(transparent)]
     RedbStorageError(#[from] redb::StorageError),
+
+    #[error(transparent)]
+    RedbCommitError(#[from] redb::CommitError),
+
+    #[error(transparent)]
+    RedbTransactionError(#[from] redb::TransactionError),
 }
 
 pub struct Store {
@@ -41,6 +47,13 @@ impl Store {
     ) -> Result<(), BdkRedbError> {
         let mut table = db_tx.open_table(NETWORK)?;
         let _ = table.insert(wallet_name, network.to_string());
+        Ok(())
+    }
+
+    pub fn create_tables(&mut self) -> Result<(), BdkRedbError> {
+        let db_tx = self.db.begin_write()?;
+        let _ = db_tx.open_table(NETWORK);
+        db_tx.commit()?;
         Ok(())
     }
 
