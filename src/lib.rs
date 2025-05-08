@@ -33,18 +33,22 @@ impl Store {
         Ok(Store { db })
     }
 
-    pub fn persist_network(txn: &WriteTransaction, network: &Network, wallet_name: &str) -> Result<(), BdkRedbError> {
-        let mut table = txn.open_table(NETWORK)?;
+    pub fn persist_network(
+        db_tx: &WriteTransaction,
+        network: &Network,
+        wallet_name: &str,
+    ) -> Result<(), BdkRedbError> {
+        let mut table = db_tx.open_table(NETWORK)?;
         let _ = table.insert(wallet_name, network.to_string());
         Ok(())
     }
 
     pub fn read_network(
-        txn: &ReadTransaction,
+        db_tx: &ReadTransaction,
         changeset: &mut ChangeSet,
         wallet_name: &str,
     ) -> Result<(), BdkRedbError> {
-        let table = txn.open_table(NETWORK)?;
+        let table = db_tx.open_table(NETWORK)?;
         changeset.network = match table.get(wallet_name)? {
             Some(network) => Some(Network::from_str(&network.value()).expect("parse network")),
             None => return Err(BdkRedbError::NetworkPersistError),
