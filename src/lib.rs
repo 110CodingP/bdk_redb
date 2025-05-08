@@ -12,7 +12,7 @@ pub struct Store {
 }
 
 impl Store {
-    pub fn create<P>(file_path: P) -> Result<Self, BdkRedbError>
+    pub fn load_or_create<P>(file_path: P) -> Result<Self, BdkRedbError>
     where
         P: AsRef<Path>,
     {
