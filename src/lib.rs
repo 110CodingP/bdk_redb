@@ -22,15 +22,16 @@ pub enum BdkRedbError {
 
 pub struct Store {
     db: Database,
+    wallet_name: String,
 }
 
 impl Store {
-    pub fn load_or_create<P>(file_path: P) -> Result<Self, BdkRedbError>
+    pub fn load_or_create<P>(file_path: P, wallet_name: String) -> Result<Self, BdkRedbError>
     where
         P: AsRef<Path>,
     {
         let db = Database::create(file_path)?;
-        Ok(Store { db })
+        Ok(Store { db, wallet_name })
     }
 
     pub fn persist_network(
