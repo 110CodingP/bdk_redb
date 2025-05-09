@@ -70,3 +70,40 @@ impl Store {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use std::fs::remove_file;
+
+    fn create_test_store() -> Store {
+        let mut store = Store::load_or_create("path", "wallet1".to_string()).unwrap();
+        store.create_tables().unwrap();
+        store
+    }
+
+    fn test_network_persistance(store: &Store) {
+        let db_tx = store.db.begin_write().unwrap();
+        store
+            .persist_network(&db_tx, &Network::Bitcoin)
+            .unwrap();
+        db_tx.commit().unwrap();
+
+        let db_tx = store.db.begin_read().unwrap();
+        let mut changeset = ChangeSet::default();
+        store
+            .read_network(&db_tx, &mut changeset)
+            .unwrap();
+
+        assert_eq!(changeset.network, Some(Network::Bitcoin));
+    }
+
+    #[test]
+    fn test_persistance() {
+        let store = create_test_store();
+
+        test_network_persistance(&store);
+
+        remove_file("path").unwrap();
+    }
+}
