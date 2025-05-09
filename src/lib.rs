@@ -70,7 +70,7 @@ mod test {
         store
     }
 
-    fn test_network_persistance(store: &Store) {
+    fn test_network_persistence(store: &Store) {
         let db_tx = store.db.begin_write().unwrap();
         store.persist_network(&db_tx, &Network::Bitcoin).unwrap();
         db_tx.commit().unwrap();
@@ -83,10 +83,10 @@ mod test {
     }
 
     #[test]
-    fn test_persistance() {
+    fn test_persistence() {
         let store = create_test_store();
 
-        test_network_persistance(&store);
+        test_network_persistence(&store);
 
         remove_file("path").unwrap();
     }
