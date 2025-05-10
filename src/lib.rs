@@ -135,6 +135,9 @@ impl Store {
 #[cfg(test)]
 mod test {
     use super::*;
+    use bdk_chain::DescriptorExt;
+    use bdk_wallet::bitcoin::hashes::Hash;
+    use bdk_wallet::{descriptor::Descriptor, keys::DescriptorPublicKey};
     use std::fs::remove_file;
 
     fn create_test_store(path: &str, wallet_name: &str) -> Store {
@@ -155,6 +158,30 @@ mod test {
         assert_eq!(changeset.network, Some(Network::Bitcoin));
     }
 
+    fn test_keychains_persistence(store: &Store) {
+        let db_tx = store.db.begin_write().unwrap();
+
+        let descriptor: Descriptor<DescriptorPublicKey> = "tr([5940b9b9/86'/0'/0']tpubDDVNqmq75GNPWQ9UNKfP43UwjaHU4GYfoPavojQbfpyfZp2KetWgjGBRRAy4tYCrAA6SB11mhQAkqxjh1VtQHyKwT4oYxpwLaGHvoKmtxZf/0/*)#44aqnlam".parse().unwrap();
+        let change_descriptor: Descriptor<DescriptorPublicKey> = "tr([5940b9b9/86'/0'/0']tpubDDVNqmq75GNPWQ9UNKfP43UwjaHU4GYfoPavojQbfpyfZp2KetWgjGBRRAy4tYCrAA6SB11mhQAkqxjh1VtQHyKwT4oYxpwLaGHvoKmtxZf/1/*)#ypcpw2dr".parse().unwrap();
+        let descriptors = vec![descriptor.to_string(), change_descriptor.to_string()];
+        let descriptor_id = descriptor.descriptor_id().to_byte_array();
+        let change_descriptor_id = change_descriptor.descriptor_id().to_byte_array();
+        let descriptor_ids = vec![descriptor_id.as_slice(), change_descriptor_id.as_slice()];
+        let labels = vec!["External".to_string(), "Internal".to_string()];
+
+        store
+            .persist_keychains(&db_tx, descriptors, descriptor_ids, labels)
+            .unwrap();
+        db_tx.commit().unwrap();
+
+        let db_tx = store.db.begin_read().unwrap();
+        let mut changeset = ChangeSet::default();
+        store.read_keychains(&db_tx, &mut changeset, 2).unwrap();
+
+        assert_eq!(changeset.descriptor, Some(descriptor));
+        assert_eq!(changeset.change_descriptor, Some(change_descriptor));
+    }
+
     fn delete_store(path: &str) {
         remove_file(path).unwrap();
     }
@@ -164,7 +191,37 @@ mod test {
         let store = create_test_store("test_persistence", "wallet1");
 
         test_network_persistence(&store);
+        test_keychains_persistence(&store);
 
         delete_store("test_persistence");
+    }
+
+    #[test]
+    fn test_single_desc_persistence() {
+        let store = create_test_store("test_single_desc_persistence", "wallet1");
+
+        let db_tx = store.db.begin_write().unwrap();
+
+        let descriptor: Descriptor<DescriptorPublicKey> = "tr([5940b9b9/86'/0'/0']tpubDDVNqmq75GNPWQ9UNKfP43UwjaHU4GYfoPavojQbfpyfZp2KetWgjGBRRAy4tYCrAA6SB11mhQAkqxjh1VtQHyKwT4oYxpwLaGHvoKmtxZf/0/*)#44aqnlam".parse().unwrap();
+        let descriptor_id = descriptor.descriptor_id().to_byte_array();
+
+        store
+            .persist_keychains(
+                &db_tx,
+                vec![descriptor.to_string()],
+                vec![descriptor_id.as_slice()],
+                vec!["External".to_string()],
+            )
+            .unwrap();
+        db_tx.commit().unwrap();
+
+        let db_tx = store.db.begin_read().unwrap();
+        let mut changeset = ChangeSet::default();
+        store.read_keychains(&db_tx, &mut changeset, 1).unwrap();
+
+        assert_eq!(changeset.descriptor, Some(descriptor));
+        assert_eq!(changeset.change_descriptor, None);
+
+        delete_store("test_single_desc_persistence");
     }
 }
