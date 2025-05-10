@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+bdk_chain = "0.22.0"
 bdk_wallet = "1.2.0"
 redb = "2.5.0"
 thiserror = "2.0.12"
