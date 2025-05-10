@@ -1,9 +1,12 @@
 use bdk_wallet::ChangeSet;
 use bdk_wallet::bitcoin::Network;
-use redb::{Database, ReadTransaction, TableDefinition, WriteTransaction};
+use redb::{Database, ReadTransaction, ReadableTable, TableDefinition, WriteTransaction};
+use std::collections::HashMap;
 use std::{path::Path, str::FromStr};
 
 const NETWORK: TableDefinition<&str, String> = TableDefinition::new("network");
+const KEYCHAINS: TableDefinition<(&str, String), (String, &[u8])> =
+    TableDefinition::new("keychains");
 
 #[derive(Debug, thiserror::Error)]
 pub enum BdkRedbError {
@@ -12,6 +15,9 @@ pub enum BdkRedbError {
 
     #[error("network yet to be persisted")]
     NetworkPersistError,
+
+    #[error("descriptor yet to be persisted")]
+    DescPersistError { num_descs: u64 }, // upper bound on the number of descriptors found in the db
 }
 
 pub struct Store {
@@ -38,9 +44,32 @@ impl Store {
         Ok(())
     }
 
+    pub fn persist_keychains(
+        &self,
+        db_tx: &WriteTransaction,
+        descriptors: Vec<String>,
+        descriptor_ids: Vec<&[u8]>,
+        labels: Vec<String>,
+    ) -> Result<(), BdkRedbError> {
+        let mut table = db_tx.open_table(KEYCHAINS).map_err(redb::Error::from)?;
+
+        for ((descriptor, descriptor_id), label) in
+            descriptors.into_iter().zip(descriptor_ids).zip(labels)
+        {
+            table
+                .insert((&*self.wallet_name, label), (descriptor, descriptor_id))
+                .map_err(redb::Error::from)?;
+        }
+
+        Ok(())
+    }
+
     pub fn create_tables(&mut self) -> Result<(), BdkRedbError> {
         let db_tx = self.db.begin_write().map_err(redb::Error::from)?;
+
         let _ = db_tx.open_table(NETWORK);
+        let _ = db_tx.open_table(KEYCHAINS);
+
         db_tx.commit().map_err(redb::Error::from)?;
         Ok(())
     }
@@ -55,6 +84,50 @@ impl Store {
             Some(network) => Some(Network::from_str(&network.value()).expect("parse network")),
             None => return Err(BdkRedbError::NetworkPersistError),
         };
+        Ok(())
+    }
+
+    pub fn read_keychains(
+        &self,
+        db_tx: &ReadTransaction,
+        changeset: &mut ChangeSet,
+        num_keychains: u64,
+    ) -> Result<(), BdkRedbError> {
+        let table = db_tx.open_table(KEYCHAINS).map_err(redb::Error::from)?;
+
+        let mut descriptors: HashMap<String, String> = HashMap::new();
+
+        // ToDo: Make the following idiomatic
+        for entry in table.iter().map_err(redb::Error::from)? {
+            let (key, value) = entry.map_err(redb::Error::from)?;
+            if key.value().0 == &*self.wallet_name {
+                descriptors.insert(key.value().1, value.value().0);
+            }
+        }
+
+        if descriptors.len() as u64 != num_keychains {
+            return Err(BdkRedbError::DescPersistError {
+                num_descs: descriptors.len() as u64,
+            });
+        }
+
+        changeset.descriptor = Some(
+            descriptors
+                .get("External")
+                .ok_or(BdkRedbError::DescPersistError { num_descs: 0 })?
+                .parse()
+                .expect("parse descriptor"),
+        );
+
+        if num_keychains == 2 {
+            changeset.change_descriptor = Some(
+                descriptors
+                    .get("Internal")
+                    .ok_or(BdkRedbError::DescPersistError { num_descs: 1 })?
+                    .parse()
+                    .expect("parse change descriptor"),
+            );
+        }
         Ok(())
     }
 }
