@@ -1,5 +1,8 @@
+mod error;
+
 use bdk_wallet::ChangeSet;
 use bdk_wallet::bitcoin::Network;
+use error::MissingError;
 use redb::{Database, ReadTransaction, ReadableTable, TableDefinition, WriteTransaction};
 use std::collections::HashMap;
 use std::{path::Path, str::FromStr};
@@ -13,11 +16,8 @@ pub enum BdkRedbError {
     #[error(transparent)]
     RedbError(#[from] redb::Error),
 
-    #[error("network yet to be persisted")]
-    NetworkPersistError,
-
-    #[error("descriptor yet to be persisted")]
-    DescPersistError { num_descs: u64 }, // upper bound on the number of descriptors found in the db
+    #[error(transparent)]
+    DataMissingError(#[from] MissingError),
 }
 
 pub struct Store {
@@ -82,7 +82,7 @@ impl Store {
         let table = db_tx.open_table(NETWORK).map_err(redb::Error::from)?;
         changeset.network = match table.get(&*self.wallet_name).map_err(redb::Error::from)? {
             Some(network) => Some(Network::from_str(&network.value()).expect("parse network")),
-            None => return Err(BdkRedbError::NetworkPersistError),
+            None => return Err(BdkRedbError::DataMissingError(MissingError::NetworkPersistError)),
         };
         Ok(())
     }
@@ -106,15 +106,15 @@ impl Store {
         }
 
         if descriptors.len() as u64 != num_keychains {
-            return Err(BdkRedbError::DescPersistError {
+            return Err(BdkRedbError::DataMissingError(MissingError::DescPersistError {
                 num_descs: descriptors.len() as u64,
-            });
+            })) ;
         }
 
         changeset.descriptor = Some(
             descriptors
                 .get("External")
-                .ok_or(BdkRedbError::DescPersistError { num_descs: 0 })?
+                .ok_or(BdkRedbError::DataMissingError( MissingError::DescPersistError { num_descs: 0 }))?
                 .parse()
                 .expect("parse descriptor"),
         );
@@ -123,7 +123,7 @@ impl Store {
             changeset.change_descriptor = Some(
                 descriptors
                     .get("Internal")
-                    .ok_or(BdkRedbError::DescPersistError { num_descs: 1 })?
+                    .ok_or(BdkRedbError::DataMissingError( MissingError::DescPersistError { num_descs: 1 }))?
                     .parse()
                     .expect("parse change descriptor"),
             );
