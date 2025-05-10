@@ -137,8 +137,8 @@ mod test {
     use super::*;
     use std::fs::remove_file;
 
-    fn create_test_store() -> Store {
-        let mut store = Store::load_or_create("path", "wallet1".to_string()).unwrap();
+    fn create_test_store(path: &str, wallet_name: &str) -> Store {
+        let mut store = Store::load_or_create(path, wallet_name.to_string()).unwrap();
         store.create_tables().unwrap();
         store
     }
@@ -155,12 +155,16 @@ mod test {
         assert_eq!(changeset.network, Some(Network::Bitcoin));
     }
 
+    fn delete_store(path: &str) {
+        remove_file(path).unwrap();
+    }
+
     #[test]
     fn test_persistence() {
-        let store = create_test_store();
+        let store = create_test_store("test_persistence", "wallet1");
 
         test_network_persistence(&store);
 
-        remove_file("path").unwrap();
+        delete_store("test_persistence");
     }
 }
