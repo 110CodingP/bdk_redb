@@ -135,7 +135,7 @@ impl Store {
 #[cfg(test)]
 mod test {
     use super::*;
-    use bdk_chain::DescriptorExt;
+    use bdk_wallet::chain::DescriptorExt;
     use bdk_wallet::bitcoin::hashes::Hash;
     use bdk_wallet::{descriptor::Descriptor, keys::DescriptorPublicKey};
     use std::fs::remove_file;
