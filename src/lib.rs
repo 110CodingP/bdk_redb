@@ -3,13 +3,11 @@ mod error;
 use bdk_wallet::ChangeSet;
 use bdk_wallet::bitcoin::Network;
 use error::MissingError;
-use redb::{Database, ReadTransaction, ReadableTable, TableDefinition, WriteTransaction};
-use std::collections::HashMap;
+use redb::{Database, MultimapTableDefinition, ReadTransaction, TableDefinition, WriteTransaction};
 use std::{path::Path, str::FromStr};
 
 const NETWORK: TableDefinition<&str, String> = TableDefinition::new("network");
-const KEYCHAINS: TableDefinition<(&str, String), (String, &[u8])> =
-    TableDefinition::new("keychains");
+const KEYCHAINS: MultimapTableDefinition<&str, String> = MultimapTableDefinition::new("keychains");
 
 #[derive(Debug, thiserror::Error)]
 pub enum BdkRedbError {
@@ -47,17 +45,22 @@ impl Store {
     pub fn persist_keychains(
         &self,
         db_tx: &WriteTransaction,
-        descriptors: Vec<String>,
-        descriptor_ids: Vec<&[u8]>,
-        labels: Vec<String>,
+        changeset: &mut ChangeSet,
     ) -> Result<(), BdkRedbError> {
-        let mut table = db_tx.open_table(KEYCHAINS).map_err(redb::Error::from)?;
+        let mut table = db_tx
+            .open_multimap_table(KEYCHAINS)
+            .map_err(redb::Error::from)?;
 
-        for ((descriptor, descriptor_id), label) in
-            descriptors.into_iter().zip(descriptor_ids).zip(labels)
-        {
+        // assuming descriptor would be persisted once and only once for whole lifetime of wallet.
+        if let Some(desc) = &changeset.descriptor {
             table
-                .insert((&*self.wallet_name, label), (descriptor, descriptor_id))
+                .insert(&*self.wallet_name, desc.to_string())
+                .map_err(redb::Error::from)?;
+        }
+
+        if let Some(change_desc) = &changeset.change_descriptor {
+            table
+                .insert(&*self.wallet_name, change_desc.to_string())
                 .map_err(redb::Error::from)?;
         }
 
@@ -68,7 +71,7 @@ impl Store {
         let db_tx = self.db.begin_write().map_err(redb::Error::from)?;
 
         let _ = db_tx.open_table(NETWORK);
-        let _ = db_tx.open_table(KEYCHAINS);
+        let _ = db_tx.open_multimap_table(KEYCHAINS);
 
         db_tx.commit().map_err(redb::Error::from)?;
         Ok(())
@@ -82,7 +85,11 @@ impl Store {
         let table = db_tx.open_table(NETWORK).map_err(redb::Error::from)?;
         changeset.network = match table.get(&*self.wallet_name).map_err(redb::Error::from)? {
             Some(network) => Some(Network::from_str(&network.value()).expect("parse network")),
-            None => return Err(BdkRedbError::DataMissingError(MissingError::NetworkPersistError)),
+            None => {
+                return Err(BdkRedbError::DataMissingError(
+                    MissingError::NetworkPersistError,
+                ));
+            }
         };
         Ok(())
     }
@@ -91,43 +98,31 @@ impl Store {
         &self,
         db_tx: &ReadTransaction,
         changeset: &mut ChangeSet,
-        num_keychains: u64,
     ) -> Result<(), BdkRedbError> {
-        let table = db_tx.open_table(KEYCHAINS).map_err(redb::Error::from)?;
-
-        let mut descriptors: HashMap<String, String> = HashMap::new();
+        let table = db_tx
+            .open_multimap_table(KEYCHAINS)
+            .map_err(redb::Error::from)?;
 
         // ToDo: Make the following idiomatic
-        for entry in table.iter().map_err(redb::Error::from)? {
-            let (key, value) = entry.map_err(redb::Error::from)?;
-            if key.value().0 == &*self.wallet_name {
-                descriptors.insert(key.value().1, value.value().0);
+        for value in table
+            .get(&*self.wallet_name)
+            .map_err(redb::Error::from)
+            .expect("wallet keychains should be persisted")
+        {
+            if changeset.descriptor.is_none() {
+                changeset.descriptor =
+                    Some(value.unwrap().value().parse().expect("pars descriptor"))
+            } else {
+                changeset.change_descriptor = Some(
+                    value
+                        .unwrap()
+                        .value()
+                        .parse()
+                        .expect(" parse change descriptor"),
+                )
             }
         }
 
-        if descriptors.len() as u64 != num_keychains {
-            return Err(BdkRedbError::DataMissingError(MissingError::DescPersistError {
-                num_descs: descriptors.len() as u64,
-            })) ;
-        }
-
-        changeset.descriptor = Some(
-            descriptors
-                .get("External")
-                .ok_or(BdkRedbError::DataMissingError( MissingError::DescPersistError { num_descs: 0 }))?
-                .parse()
-                .expect("parse descriptor"),
-        );
-
-        if num_keychains == 2 {
-            changeset.change_descriptor = Some(
-                descriptors
-                    .get("Internal")
-                    .ok_or(BdkRedbError::DataMissingError( MissingError::DescPersistError { num_descs: 1 }))?
-                    .parse()
-                    .expect("parse change descriptor"),
-            );
-        }
         Ok(())
     }
 }
@@ -135,8 +130,6 @@ impl Store {
 #[cfg(test)]
 mod test {
     use super::*;
-    use bdk_wallet::chain::DescriptorExt;
-    use bdk_wallet::bitcoin::hashes::Hash;
     use bdk_wallet::{descriptor::Descriptor, keys::DescriptorPublicKey};
     use std::fs::remove_file;
 
@@ -163,20 +156,16 @@ mod test {
 
         let descriptor: Descriptor<DescriptorPublicKey> = "tr([5940b9b9/86'/0'/0']tpubDDVNqmq75GNPWQ9UNKfP43UwjaHU4GYfoPavojQbfpyfZp2KetWgjGBRRAy4tYCrAA6SB11mhQAkqxjh1VtQHyKwT4oYxpwLaGHvoKmtxZf/0/*)#44aqnlam".parse().unwrap();
         let change_descriptor: Descriptor<DescriptorPublicKey> = "tr([5940b9b9/86'/0'/0']tpubDDVNqmq75GNPWQ9UNKfP43UwjaHU4GYfoPavojQbfpyfZp2KetWgjGBRRAy4tYCrAA6SB11mhQAkqxjh1VtQHyKwT4oYxpwLaGHvoKmtxZf/1/*)#ypcpw2dr".parse().unwrap();
-        let descriptors = vec![descriptor.to_string(), change_descriptor.to_string()];
-        let descriptor_id = descriptor.descriptor_id().to_byte_array();
-        let change_descriptor_id = change_descriptor.descriptor_id().to_byte_array();
-        let descriptor_ids = vec![descriptor_id.as_slice(), change_descriptor_id.as_slice()];
-        let labels = vec!["External".to_string(), "Internal".to_string()];
+        let mut changeset = ChangeSet::default();
+        changeset.descriptor = Some(descriptor.clone());
+        changeset.change_descriptor = Some(change_descriptor.clone());
 
-        store
-            .persist_keychains(&db_tx, descriptors, descriptor_ids, labels)
-            .unwrap();
+        store.persist_keychains(&db_tx, &mut changeset).unwrap();
         db_tx.commit().unwrap();
 
         let db_tx = store.db.begin_read().unwrap();
         let mut changeset = ChangeSet::default();
-        store.read_keychains(&db_tx, &mut changeset, 2).unwrap();
+        store.read_keychains(&db_tx, &mut changeset).unwrap();
 
         assert_eq!(changeset.descriptor, Some(descriptor));
         assert_eq!(changeset.change_descriptor, Some(change_descriptor));
@@ -203,21 +192,16 @@ mod test {
         let db_tx = store.db.begin_write().unwrap();
 
         let descriptor: Descriptor<DescriptorPublicKey> = "tr([5940b9b9/86'/0'/0']tpubDDVNqmq75GNPWQ9UNKfP43UwjaHU4GYfoPavojQbfpyfZp2KetWgjGBRRAy4tYCrAA6SB11mhQAkqxjh1VtQHyKwT4oYxpwLaGHvoKmtxZf/0/*)#44aqnlam".parse().unwrap();
-        let descriptor_id = descriptor.descriptor_id().to_byte_array();
 
-        store
-            .persist_keychains(
-                &db_tx,
-                vec![descriptor.to_string()],
-                vec![descriptor_id.as_slice()],
-                vec!["External".to_string()],
-            )
-            .unwrap();
+        let mut changeset = ChangeSet::default();
+        changeset.descriptor = Some(descriptor.clone());
+
+        store.persist_keychains(&db_tx, &mut changeset).unwrap();
         db_tx.commit().unwrap();
 
         let db_tx = store.db.begin_read().unwrap();
         let mut changeset = ChangeSet::default();
-        store.read_keychains(&db_tx, &mut changeset, 1).unwrap();
+        store.read_keychains(&db_tx, &mut changeset).unwrap();
 
         assert_eq!(changeset.descriptor, Some(descriptor));
         assert_eq!(changeset.change_descriptor, None);

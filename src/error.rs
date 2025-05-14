@@ -1,6 +1,5 @@
 #[derive(Debug, thiserror::Error)]
 pub enum MissingError {
-
     #[error("network yet to be persisted")]
     NetworkPersistError,
 
