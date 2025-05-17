@@ -13,14 +13,14 @@ use std::{path::Path, str::FromStr};
 
 const NETWORK: TableDefinition<&str, String> = TableDefinition::new("network");
 const KEYCHAINS: MultimapTableDefinition<&str, String> = MultimapTableDefinition::new("keychains");
-const LOCALCHAIN: TableDefinition<&str, LocalChainChangesetWrapper> =
+const LOCALCHAIN: TableDefinition<&str, LocalChainChangeSetWrapper> =
     TableDefinition::new("local_chain");
 
 #[derive(Debug, Serialize, Deserialize)]
-struct LocalChainChangesetWrapper(bdk_wallet::chain::local_chain::ChangeSet);
+struct LocalChainChangeSetWrapper(bdk_wallet::chain::local_chain::ChangeSet);
 
-impl Value for LocalChainChangesetWrapper {
-    type SelfType<'a> = LocalChainChangesetWrapper;
+impl Value for LocalChainChangeSetWrapper {
+    type SelfType<'a> = LocalChainChangeSetWrapper;
     type AsBytes<'a> = Vec<u8>;
     fn fixed_width() -> Option<usize> {
         None
@@ -114,7 +114,7 @@ impl Store {
         let mut table = db_tx.open_table(LOCALCHAIN).map_err(redb::Error::from)?;
         let mut aggregated_changeset = match table.remove(&*self.wallet_name).unwrap() {
             Some(value) => match value.value() {
-                LocalChainChangesetWrapper(changeset) => changeset,
+                LocalChainChangeSetWrapper(changeset) => changeset,
             },
             None => local_chain::ChangeSet::default(),
         };
@@ -122,7 +122,7 @@ impl Store {
         table
             .insert(
                 &*self.wallet_name,
-                LocalChainChangesetWrapper(aggregated_changeset),
+                LocalChainChangeSetWrapper(aggregated_changeset),
             )
             .unwrap();
         Ok(())
@@ -193,7 +193,7 @@ impl Store {
         changeset: &mut ChangeSet,
     ) -> Result<(), BdkRedbError> {
         let table = db_tx.open_table(LOCALCHAIN).map_err(redb::Error::from)?;
-        let LocalChainChangesetWrapper(local_chain) =
+        let LocalChainChangeSetWrapper(local_chain) =
             table.get(&*self.wallet_name).unwrap().unwrap().value();
         changeset.local_chain = local_chain;
         Ok(())
