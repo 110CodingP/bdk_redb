@@ -1,13 +1,47 @@
 mod error;
 
-use bdk_wallet::ChangeSet;
+use bdk_wallet::{chain::Merge, ChangeSet};
 use bdk_wallet::bitcoin::Network;
 use error::MissingError;
-use redb::{Database, MultimapTableDefinition, ReadTransaction, TableDefinition, WriteTransaction};
+use redb::{
+    Database, MultimapTableDefinition, ReadTransaction, TableDefinition, TypeName, Value,
+    WriteTransaction,
+};
+use serde::{Deserialize, Serialize};
 use std::{path::Path, str::FromStr};
 
 const NETWORK: TableDefinition<&str, String> = TableDefinition::new("network");
 const KEYCHAINS: MultimapTableDefinition<&str, String> = MultimapTableDefinition::new("keychains");
+const LOCALCHAIN: TableDefinition<&str, LocalChainChangesetWrapper> =
+    TableDefinition::new("local_chain");
+
+#[derive(Debug, Serialize, Deserialize)]
+struct LocalChainChangesetWrapper(bdk_wallet::chain::local_chain::ChangeSet);
+
+impl Value for LocalChainChangesetWrapper {
+    type SelfType<'a> = LocalChainChangesetWrapper;
+    type AsBytes<'a> = Vec<u8>;
+    fn fixed_width() -> Option<usize> {
+        None
+    }
+    fn as_bytes<'a, 'b: 'a>(value: &'a Self::SelfType<'b>) -> Self::AsBytes<'a>
+    where
+        Self: 'b,
+    {
+        let mut vec: Vec<u8> = Vec::new();
+        ciborium::into_writer(value, &mut vec).unwrap();
+        vec
+    }
+    fn from_bytes<'a>(data: &'a [u8]) -> Self::SelfType<'a>
+    where
+        Self: 'a,
+    {
+        ciborium::from_reader(data).unwrap()
+    }
+    fn type_name() -> redb::TypeName {
+        TypeName::new("local_chain")
+    }
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum BdkRedbError {
@@ -67,6 +101,18 @@ impl Store {
         Ok(())
     }
 
+    pub fn persist_local_chain(
+        &self,
+        db_tx: &WriteTransaction,
+        changeset: &mut ChangeSet,
+    ) -> Result<(), BdkRedbError> {
+        let mut table = db_tx.open_table(LOCALCHAIN).map_err(redb::Error::from)?;
+        let LocalChainChangesetWrapper(mut aggregated_changeset) = table.remove(&*self.wallet_name).unwrap().unwrap().value();
+        aggregated_changeset.merge(changeset.local_chain.clone());
+        table.insert(&*self.wallet_name, LocalChainChangesetWrapper(aggregated_changeset)).unwrap();
+        Ok(())
+    }
+
     pub fn create_tables(&mut self) -> Result<(), BdkRedbError> {
         let db_tx = self.db.begin_write().map_err(redb::Error::from)?;
 
@@ -123,6 +169,18 @@ impl Store {
             }
         }
 
+        Ok(())
+    }
+
+    pub fn read_local_chain(
+        &self,
+        db_tx: &ReadTransaction,
+        changeset: &mut ChangeSet,
+    ) -> Result<(), BdkRedbError> {
+        let table = db_tx.open_table(LOCALCHAIN).map_err(redb::Error::from)?;
+        let LocalChainChangesetWrapper(local_chain) =
+            table.get(&*self.wallet_name).unwrap().unwrap().value();
+        changeset.local_chain = local_chain;
         Ok(())
     }
 }

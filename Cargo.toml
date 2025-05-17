@@ -5,5 +5,7 @@ edition = "2024"
 
 [dependencies]
 bdk_wallet = "1.2.0"
+ciborium = "0.2.2"
 redb = "2.5.0"
+serde = "1.0.219"
 thiserror = "2.0.12"
