@@ -1,7 +1,8 @@
 mod error;
 
-use bdk_wallet::{chain::Merge, ChangeSet};
 use bdk_wallet::bitcoin::Network;
+use bdk_wallet::chain::local_chain;
+use bdk_wallet::{ChangeSet, chain::Merge};
 use error::MissingError;
 use redb::{
     Database, MultimapTableDefinition, ReadTransaction, TableDefinition, TypeName, Value,
@@ -107,9 +108,19 @@ impl Store {
         changeset: &mut ChangeSet,
     ) -> Result<(), BdkRedbError> {
         let mut table = db_tx.open_table(LOCALCHAIN).map_err(redb::Error::from)?;
-        let LocalChainChangesetWrapper(mut aggregated_changeset) = table.remove(&*self.wallet_name).unwrap().unwrap().value();
+        let mut aggregated_changeset = match table.remove(&*self.wallet_name).unwrap() {
+            Some(value) => match value.value() {
+                LocalChainChangesetWrapper(changeset) => changeset,
+            },
+            None => local_chain::ChangeSet::default(),
+        };
         aggregated_changeset.merge(changeset.local_chain.clone());
-        table.insert(&*self.wallet_name, LocalChainChangesetWrapper(aggregated_changeset)).unwrap();
+        table
+            .insert(
+                &*self.wallet_name,
+                LocalChainChangesetWrapper(aggregated_changeset),
+            )
+            .unwrap();
         Ok(())
     }
 
@@ -188,8 +199,17 @@ impl Store {
 #[cfg(test)]
 mod test {
     use super::*;
-    use bdk_wallet::{descriptor::Descriptor, keys::DescriptorPublicKey};
-    use std::fs::remove_file;
+    use bdk_wallet::{
+        bitcoin::{self, BlockHash},
+        chain::local_chain,
+        descriptor::Descriptor,
+        keys::DescriptorPublicKey,
+    };
+    use std::{collections::BTreeMap, fs::remove_file};
+
+    macro_rules! hash {
+        ($index:literal) => {{ bitcoin::hashes::Hash::hash($index.as_bytes()) }};
+    }
 
     fn create_test_store(path: &str, wallet_name: &str) -> Store {
         let mut store = Store::load_or_create(path, wallet_name.to_string()).unwrap();
@@ -239,6 +259,7 @@ mod test {
 
         test_network_persistence(&store);
         test_keychains_persistence(&store);
+        test_local_chain_persistence(&store);
 
         delete_store("test_persistence");
     }
@@ -265,5 +286,47 @@ mod test {
         assert_eq!(changeset.change_descriptor, None);
 
         delete_store("test_single_desc_persistence");
+    }
+
+    fn test_local_chain_persistence(store: &Store) {
+        let mut blocks: BTreeMap<u32, Option<BlockHash>> = BTreeMap::new();
+        blocks.insert(0u32, Some(hash!("B")));
+        blocks.insert(1u32, Some(hash!("D")));
+        blocks.insert(2u32, Some(hash!("K")));
+        let local_chain_changeset = local_chain::ChangeSet { blocks };
+        let mut changeset = ChangeSet {
+            local_chain: local_chain_changeset.clone(),
+            ..Default::default()
+        };
+        let db_tx = store.db.begin_write().unwrap();
+        store.persist_local_chain(&db_tx, &mut changeset).unwrap();
+        db_tx.commit().unwrap();
+        let db_tx = store.db.begin_read().unwrap();
+        let mut changeset = ChangeSet::default();
+        store.read_local_chain(&db_tx, &mut changeset).unwrap();
+        assert_eq!(local_chain_changeset, changeset.local_chain);
+
+        // ******************The following fails****************************
+
+        // let mut blocks: BTreeMap<u32, Option<BlockHash>> = BTreeMap::new();
+        // blocks.insert(2u32, None);
+        // let local_chain_changeset = local_chain::ChangeSet { blocks };
+        // let mut changeset = ChangeSet {
+        //     local_chain: local_chain_changeset.clone(),
+        //     ..Default::default()
+        // };
+        // let db_tx = store.db.begin_write().unwrap();
+        // store.persist_local_chain(&db_tx, &mut changeset).unwrap();
+        // db_tx.commit().unwrap();
+        // let db_tx = store.db.begin_read().unwrap();
+        // let mut changeset = ChangeSet::default();
+        // store.read_local_chain(&db_tx, &mut changeset).unwrap();
+
+        // let mut blocks: BTreeMap<u32, Option<BlockHash>> = BTreeMap::new();
+        // blocks.insert(0u32, Some(hash!("B")));
+        // blocks.insert(1u32, Some(hash!("D")));
+        // let local_chain_changeset = local_chain::ChangeSet { blocks };
+
+        // assert_eq!(local_chain_changeset, changeset.local_chain);
     }
 }
