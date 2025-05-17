@@ -70,17 +70,21 @@ impl Store {
     pub fn persist_network(
         &self,
         db_tx: &WriteTransaction,
-        network: &Network,
+        changeset: &ChangeSet,
     ) -> Result<(), BdkRedbError> {
         let mut table = db_tx.open_table(NETWORK).map_err(redb::Error::from)?;
-        let _ = table.insert(&*self.wallet_name, network.to_string());
+
+        // assuming network will be persisted once and only once
+        if let Some(network) = changeset.network {
+            let _ = table.insert(&*self.wallet_name, network.to_string());
+        }
         Ok(())
     }
 
     pub fn persist_keychains(
         &self,
         db_tx: &WriteTransaction,
-        changeset: &mut ChangeSet,
+        changeset: &ChangeSet,
     ) -> Result<(), BdkRedbError> {
         let mut table = db_tx
             .open_multimap_table(KEYCHAINS)
@@ -105,7 +109,7 @@ impl Store {
     pub fn persist_local_chain(
         &self,
         db_tx: &WriteTransaction,
-        changeset: &mut ChangeSet,
+        changeset: &ChangeSet,
     ) -> Result<(), BdkRedbError> {
         let mut table = db_tx.open_table(LOCALCHAIN).map_err(redb::Error::from)?;
         let mut aggregated_changeset = match table.remove(&*self.wallet_name).unwrap() {
@@ -219,7 +223,11 @@ mod test {
 
     fn test_network_persistence(store: &Store) {
         let db_tx = store.db.begin_write().unwrap();
-        store.persist_network(&db_tx, &Network::Bitcoin).unwrap();
+        let changeset = ChangeSet {
+            network: Some(Network::Bitcoin),
+            ..Default::default()
+        };
+        store.persist_network(&db_tx, &changeset).unwrap();
         db_tx.commit().unwrap();
 
         let db_tx = store.db.begin_read().unwrap();
@@ -238,7 +246,7 @@ mod test {
         changeset.descriptor = Some(descriptor.clone());
         changeset.change_descriptor = Some(change_descriptor.clone());
 
-        store.persist_keychains(&db_tx, &mut changeset).unwrap();
+        store.persist_keychains(&db_tx, &changeset).unwrap();
         db_tx.commit().unwrap();
 
         let db_tx = store.db.begin_read().unwrap();
@@ -275,7 +283,7 @@ mod test {
         let mut changeset = ChangeSet::default();
         changeset.descriptor = Some(descriptor.clone());
 
-        store.persist_keychains(&db_tx, &mut changeset).unwrap();
+        store.persist_keychains(&db_tx, &changeset).unwrap();
         db_tx.commit().unwrap();
 
         let db_tx = store.db.begin_read().unwrap();
@@ -294,12 +302,12 @@ mod test {
         blocks.insert(1u32, Some(hash!("D")));
         blocks.insert(2u32, Some(hash!("K")));
         let local_chain_changeset = local_chain::ChangeSet { blocks };
-        let mut changeset = ChangeSet {
+        let changeset = ChangeSet {
             local_chain: local_chain_changeset.clone(),
             ..Default::default()
         };
         let db_tx = store.db.begin_write().unwrap();
-        store.persist_local_chain(&db_tx, &mut changeset).unwrap();
+        store.persist_local_chain(&db_tx, &changeset).unwrap();
         db_tx.commit().unwrap();
         let db_tx = store.db.begin_read().unwrap();
         let mut changeset = ChangeSet::default();
