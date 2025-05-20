@@ -231,6 +231,19 @@ impl Store {
         Ok(())
     }
 
+    pub fn persist_changeset(&self, changeset: &ChangeSet) -> Result<(), BdkRedbError> {
+        let db_tx = self.db.begin_write().unwrap();
+
+        self.persist_network(&db_tx, changeset)?;
+        self.persist_keychains(&db_tx, changeset)?;
+        self.persist_local_chain(&db_tx, changeset)?;
+        self.persist_tx_graph(&db_tx, changeset)?;
+        self.persist_last_revealed(&db_tx, changeset)?;
+
+        db_tx.commit().unwrap();
+        Ok(())
+    }
+
     pub fn create_tables(&mut self) -> Result<(), BdkRedbError> {
         let db_tx = self.db.begin_write().map_err(redb::Error::from)?;
 
@@ -323,6 +336,18 @@ impl Store {
         let KeychainChangeSetWrapper(indexer) =
             table.get(&*self.wallet_name).unwrap().unwrap().value();
         changeset.indexer = indexer;
+        Ok(())
+    }
+
+    pub fn read_changeset(&self, changeset: &mut ChangeSet) -> Result<(), BdkRedbError> {
+        let db_tx = self.db.begin_read().unwrap();
+
+        self.read_network(&db_tx, changeset)?;
+        self.read_keychains(&db_tx, changeset)?;
+        self.read_local_chain(&db_tx, changeset)?;
+        self.read_tx_graph(&db_tx, changeset)?;
+        self.read_last_revealed(&db_tx, changeset)?;
+
         Ok(())
     }
 }
@@ -601,5 +626,74 @@ mod test {
         store.read_last_revealed(&db_tx, &mut changeset).unwrap();
 
         assert_eq!(changeset.indexer, keychain_txout_changeset);
+    }
+
+    #[test]
+    fn test_persist_changeset() {
+        let store = create_test_store("test_persist_changeset", "wallet1");
+
+        let descriptor: Descriptor<DescriptorPublicKey> = "tr([5940b9b9/86'/0'/0']tpubDDVNqmq75GNPWQ9UNKfP43UwjaHU4GYfoPavojQbfpyfZp2KetWgjGBRRAy4tYCrAA6SB11mhQAkqxjh1VtQHyKwT4oYxpwLaGHvoKmtxZf/0/*)#44aqnlam".parse().unwrap();
+        let change_descriptor: Descriptor<DescriptorPublicKey> = "tr([5940b9b9/86'/0'/0']tpubDDVNqmq75GNPWQ9UNKfP43UwjaHU4GYfoPavojQbfpyfZp2KetWgjGBRRAy4tYCrAA6SB11mhQAkqxjh1VtQHyKwT4oYxpwLaGHvoKmtxZf/1/*)#ypcpw2dr".parse().unwrap();
+
+        let mut blocks: BTreeMap<u32, Option<BlockHash>> = BTreeMap::new();
+        blocks.insert(0u32, Some(hash!("B")));
+        blocks.insert(1u32, Some(hash!("T")));
+        blocks.insert(2u32, Some(hash!("C")));
+        let local_chain_changeset = local_chain::ChangeSet { blocks };
+
+        let tx = Transaction {
+            version: transaction::Version::TWO,
+            lock_time: absolute::LockTime::ZERO,
+            input: vec![TxIn {
+                previous_output: OutPoint::null(),
+                ..Default::default()
+            }],
+            output: vec![TxOut {
+                value: Amount::from_sat(25_000),
+                script_pubkey: ScriptBuf::new(),
+            }],
+        };
+
+        let block_id = BlockId {
+            height: 1,
+            hash: hash!("BDK"),
+        };
+
+        let conf_anchor: ConfirmationBlockTime = ConfirmationBlockTime {
+            block_id,
+            confirmation_time: 123,
+        };
+
+        let tx_graph_changeset = tx_graph::ChangeSet::<ConfirmationBlockTime> {
+            txs: [Arc::new(tx.clone())].into(),
+            txouts: [].into(),
+            anchors: [(conf_anchor, tx.compute_txid())].into(),
+            last_seen: [].into(),
+        };
+
+        let keychain_txout_changeset = keychain_txout::ChangeSet {
+            last_revealed: [
+                (descriptor.descriptor_id(), 12),
+                (change_descriptor.descriptor_id(), 10),
+            ]
+            .into(),
+        };
+
+        let changeset_persisted = ChangeSet {
+            descriptor: Some(descriptor),
+            change_descriptor: Some(change_descriptor),
+            network: Some(Network::Bitcoin),
+            local_chain: local_chain_changeset,
+            tx_graph: tx_graph_changeset,
+            indexer: keychain_txout_changeset,
+        };
+
+        store.persist_changeset(&changeset_persisted).unwrap();
+        let mut changeset_read = ChangeSet::default();
+        store.read_changeset(&mut changeset_read).unwrap();
+
+        assert_eq!(changeset_persisted, changeset_read);
+
+        delete_store("test_persist_changeset");
     }
 }
