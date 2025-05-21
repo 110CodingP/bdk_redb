@@ -1,7 +1,8 @@
 mod error;
 
-use bdk_wallet::bitcoin::Network;
+use bdk_wallet::bitcoin::{self, Network};
 use bdk_wallet::chain::{ConfirmationBlockTime, keychain_txout, local_chain, tx_graph};
+use bdk_wallet::descriptor::{Descriptor, DescriptorPublicKey};
 use bdk_wallet::{ChangeSet, chain::Merge};
 use error::MissingError;
 use redb::{
@@ -129,12 +130,12 @@ impl Store {
     pub fn persist_network(
         &self,
         db_tx: &WriteTransaction,
-        changeset: &ChangeSet,
+        network: &Option<bitcoin::Network>,
     ) -> Result<(), BdkRedbError> {
         let mut table = db_tx.open_table(NETWORK).map_err(redb::Error::from)?;
 
         // assuming network will be persisted once and only once
-        if let Some(network) = changeset.network {
+        if let Some(network) = network {
             let _ = table.insert(&*self.wallet_name, network.to_string());
         }
         Ok(())
@@ -143,20 +144,21 @@ impl Store {
     pub fn persist_keychains(
         &self,
         db_tx: &WriteTransaction,
-        changeset: &ChangeSet,
+        desc: &Option<Descriptor<DescriptorPublicKey>>,
+        change_desc: &Option<Descriptor<DescriptorPublicKey>>,
     ) -> Result<(), BdkRedbError> {
         let mut table = db_tx
             .open_multimap_table(KEYCHAINS)
             .map_err(redb::Error::from)?;
 
         // assuming descriptor would be persisted once and only once for whole lifetime of wallet.
-        if let Some(desc) = &changeset.descriptor {
+        if let Some(desc) = desc {
             table
                 .insert(&*self.wallet_name, desc.to_string())
                 .map_err(redb::Error::from)?;
         }
 
-        if let Some(change_desc) = &changeset.change_descriptor {
+        if let Some(change_desc) = change_desc {
             table
                 .insert(&*self.wallet_name, change_desc.to_string())
                 .map_err(redb::Error::from)?;
@@ -168,7 +170,7 @@ impl Store {
     pub fn persist_local_chain(
         &self,
         db_tx: &WriteTransaction,
-        changeset: &ChangeSet,
+        changeset: &local_chain::ChangeSet,
     ) -> Result<(), BdkRedbError> {
         let mut table = db_tx.open_table(LOCALCHAIN).map_err(redb::Error::from)?;
         let mut aggregated_changeset = match table.remove(&*self.wallet_name).unwrap() {
@@ -177,7 +179,7 @@ impl Store {
             },
             None => local_chain::ChangeSet::default(),
         };
-        aggregated_changeset.merge(changeset.local_chain.clone());
+        aggregated_changeset.merge(changeset.clone());
         table
             .insert(
                 &*self.wallet_name,
@@ -190,7 +192,7 @@ impl Store {
     pub fn persist_tx_graph(
         &self,
         db_tx: &WriteTransaction,
-        changeset: &ChangeSet,
+        changeset: &tx_graph::ChangeSet<ConfirmationBlockTime>,
     ) -> Result<(), BdkRedbError> {
         let mut table = db_tx.open_table(TXGRAPH).map_err(redb::Error::from)?;
         let mut aggregated_changeset = match table.remove(&*self.wallet_name).unwrap() {
@@ -199,7 +201,7 @@ impl Store {
             },
             None => tx_graph::ChangeSet::default(),
         };
-        aggregated_changeset.merge(changeset.tx_graph.clone());
+        aggregated_changeset.merge(changeset.clone());
         table
             .insert(
                 &*self.wallet_name,
@@ -212,7 +214,7 @@ impl Store {
     pub fn persist_last_revealed(
         &self,
         db_tx: &WriteTransaction,
-        changeset: &ChangeSet,
+        changeset: &keychain_txout::ChangeSet,
     ) -> Result<(), BdkRedbError> {
         let mut table = db_tx.open_table(LAST_REVEALED).map_err(redb::Error::from)?;
         let mut aggregated_changeset = match table.remove(&*self.wallet_name).unwrap() {
@@ -221,7 +223,7 @@ impl Store {
             },
             None => keychain_txout::ChangeSet::default(),
         };
-        aggregated_changeset.merge(changeset.indexer.clone());
+        aggregated_changeset.merge(changeset.clone());
         table
             .insert(
                 &*self.wallet_name,
@@ -234,11 +236,11 @@ impl Store {
     pub fn persist_changeset(&self, changeset: &ChangeSet) -> Result<(), BdkRedbError> {
         let db_tx = self.db.begin_write().unwrap();
 
-        self.persist_network(&db_tx, changeset)?;
-        self.persist_keychains(&db_tx, changeset)?;
-        self.persist_local_chain(&db_tx, changeset)?;
-        self.persist_tx_graph(&db_tx, changeset)?;
-        self.persist_last_revealed(&db_tx, changeset)?;
+        self.persist_network(&db_tx, &changeset.network)?;
+        self.persist_keychains(&db_tx, &changeset.descriptor, &changeset.change_descriptor)?;
+        self.persist_local_chain(&db_tx, &changeset.local_chain)?;
+        self.persist_tx_graph(&db_tx, &changeset.tx_graph)?;
+        self.persist_last_revealed(&db_tx, &changeset.indexer)?;
 
         db_tx.commit().unwrap();
         Ok(())
@@ -257,10 +259,10 @@ impl Store {
     pub fn read_network(
         &self,
         db_tx: &ReadTransaction,
-        changeset: &mut ChangeSet,
+        network: &mut Option<bitcoin::Network>,
     ) -> Result<(), BdkRedbError> {
         let table = db_tx.open_table(NETWORK).map_err(redb::Error::from)?;
-        changeset.network = match table.get(&*self.wallet_name).map_err(redb::Error::from)? {
+        *network = match table.get(&*self.wallet_name).map_err(redb::Error::from)? {
             Some(network) => Some(Network::from_str(&network.value()).expect("parse network")),
             None => {
                 return Err(BdkRedbError::DataMissingError(
@@ -274,7 +276,8 @@ impl Store {
     pub fn read_keychains(
         &self,
         db_tx: &ReadTransaction,
-        changeset: &mut ChangeSet,
+        desc: &mut Option<Descriptor<DescriptorPublicKey>>,
+        change_desc: &mut Option<Descriptor<DescriptorPublicKey>>,
     ) -> Result<(), BdkRedbError> {
         let table = db_tx
             .open_multimap_table(KEYCHAINS)
@@ -286,11 +289,10 @@ impl Store {
             .map_err(redb::Error::from)
             .expect("wallet keychains should be persisted")
         {
-            if changeset.descriptor.is_none() {
-                changeset.descriptor =
-                    Some(value.unwrap().value().parse().expect("pars descriptor"))
+            if desc.is_none() {
+                *desc = Some(value.unwrap().value().parse().expect("parse descriptor"))
             } else {
-                changeset.change_descriptor = Some(
+                *change_desc = Some(
                     value
                         .unwrap()
                         .value()
@@ -306,47 +308,51 @@ impl Store {
     pub fn read_local_chain(
         &self,
         db_tx: &ReadTransaction,
-        changeset: &mut ChangeSet,
+        changeset: &mut local_chain::ChangeSet,
     ) -> Result<(), BdkRedbError> {
         let table = db_tx.open_table(LOCALCHAIN).map_err(redb::Error::from)?;
         let LocalChainChangeSetWrapper(local_chain) =
             table.get(&*self.wallet_name).unwrap().unwrap().value();
-        changeset.local_chain = local_chain;
+        *changeset = local_chain;
         Ok(())
     }
 
     pub fn read_tx_graph(
         &self,
         db_tx: &ReadTransaction,
-        changeset: &mut ChangeSet,
+        changeset: &mut tx_graph::ChangeSet<ConfirmationBlockTime>,
     ) -> Result<(), BdkRedbError> {
         let table = db_tx.open_table(TXGRAPH).map_err(redb::Error::from)?;
         let TxGraphChangeSetWrapper(tx_graph) =
             table.get(&*self.wallet_name).unwrap().unwrap().value();
-        changeset.tx_graph = tx_graph;
+        *changeset = tx_graph;
         Ok(())
     }
 
     pub fn read_last_revealed(
         &self,
         db_tx: &ReadTransaction,
-        changeset: &mut ChangeSet,
+        changeset: &mut keychain_txout::ChangeSet,
     ) -> Result<(), BdkRedbError> {
         let table = db_tx.open_table(LAST_REVEALED).map_err(redb::Error::from)?;
         let KeychainChangeSetWrapper(indexer) =
             table.get(&*self.wallet_name).unwrap().unwrap().value();
-        changeset.indexer = indexer;
+        *changeset = indexer;
         Ok(())
     }
 
     pub fn read_changeset(&self, changeset: &mut ChangeSet) -> Result<(), BdkRedbError> {
         let db_tx = self.db.begin_read().unwrap();
 
-        self.read_network(&db_tx, changeset)?;
-        self.read_keychains(&db_tx, changeset)?;
-        self.read_local_chain(&db_tx, changeset)?;
-        self.read_tx_graph(&db_tx, changeset)?;
-        self.read_last_revealed(&db_tx, changeset)?;
+        self.read_network(&db_tx, &mut changeset.network)?;
+        self.read_keychains(
+            &db_tx,
+            &mut changeset.descriptor,
+            &mut changeset.change_descriptor,
+        )?;
+        self.read_local_chain(&db_tx, &mut changeset.local_chain)?;
+        self.read_tx_graph(&db_tx, &mut changeset.tx_graph)?;
+        self.read_last_revealed(&db_tx, &mut changeset.indexer)?;
 
         Ok(())
     }
@@ -384,12 +390,12 @@ mod test {
             network: Some(Network::Bitcoin),
             ..Default::default()
         };
-        store.persist_network(&db_tx, &changeset).unwrap();
+        store.persist_network(&db_tx, &changeset.network).unwrap();
         db_tx.commit().unwrap();
 
         let db_tx = store.db.begin_read().unwrap();
         let mut changeset = ChangeSet::default();
-        store.read_network(&db_tx, &mut changeset).unwrap();
+        store.read_network(&db_tx, &mut changeset.network).unwrap();
 
         assert_eq!(changeset.network, Some(Network::Bitcoin));
     }
@@ -399,16 +405,25 @@ mod test {
 
         let descriptor: Descriptor<DescriptorPublicKey> = "tr([5940b9b9/86'/0'/0']tpubDDVNqmq75GNPWQ9UNKfP43UwjaHU4GYfoPavojQbfpyfZp2KetWgjGBRRAy4tYCrAA6SB11mhQAkqxjh1VtQHyKwT4oYxpwLaGHvoKmtxZf/0/*)#44aqnlam".parse().unwrap();
         let change_descriptor: Descriptor<DescriptorPublicKey> = "tr([5940b9b9/86'/0'/0']tpubDDVNqmq75GNPWQ9UNKfP43UwjaHU4GYfoPavojQbfpyfZp2KetWgjGBRRAy4tYCrAA6SB11mhQAkqxjh1VtQHyKwT4oYxpwLaGHvoKmtxZf/1/*)#ypcpw2dr".parse().unwrap();
-        let mut changeset = ChangeSet::default();
-        changeset.descriptor = Some(descriptor.clone());
-        changeset.change_descriptor = Some(change_descriptor.clone());
 
-        store.persist_keychains(&db_tx, &changeset).unwrap();
+        store
+            .persist_keychains(
+                &db_tx,
+                &Some(descriptor.clone()),
+                &Some(change_descriptor.clone()),
+            )
+            .unwrap();
         db_tx.commit().unwrap();
 
         let db_tx = store.db.begin_read().unwrap();
         let mut changeset = ChangeSet::default();
-        store.read_keychains(&db_tx, &mut changeset).unwrap();
+        store
+            .read_keychains(
+                &db_tx,
+                &mut changeset.descriptor,
+                &mut changeset.change_descriptor,
+            )
+            .unwrap();
 
         assert_eq!(changeset.descriptor, Some(descriptor));
         assert_eq!(changeset.change_descriptor, Some(change_descriptor));
@@ -439,15 +454,20 @@ mod test {
 
         let descriptor: Descriptor<DescriptorPublicKey> = "tr([5940b9b9/86'/0'/0']tpubDDVNqmq75GNPWQ9UNKfP43UwjaHU4GYfoPavojQbfpyfZp2KetWgjGBRRAy4tYCrAA6SB11mhQAkqxjh1VtQHyKwT4oYxpwLaGHvoKmtxZf/0/*)#44aqnlam".parse().unwrap();
 
-        let mut changeset = ChangeSet::default();
-        changeset.descriptor = Some(descriptor.clone());
-
-        store.persist_keychains(&db_tx, &changeset).unwrap();
+        store
+            .persist_keychains(&db_tx, &Some(descriptor.clone()), &None)
+            .unwrap();
         db_tx.commit().unwrap();
 
         let db_tx = store.db.begin_read().unwrap();
         let mut changeset = ChangeSet::default();
-        store.read_keychains(&db_tx, &mut changeset).unwrap();
+        store
+            .read_keychains(
+                &db_tx,
+                &mut changeset.descriptor,
+                &mut changeset.change_descriptor,
+            )
+            .unwrap();
 
         assert_eq!(changeset.descriptor, Some(descriptor));
         assert_eq!(changeset.change_descriptor, None);
@@ -461,17 +481,15 @@ mod test {
         blocks.insert(1u32, Some(hash!("D")));
         blocks.insert(2u32, Some(hash!("K")));
         let local_chain_changeset = local_chain::ChangeSet { blocks };
-        let changeset = ChangeSet {
-            local_chain: local_chain_changeset.clone(),
-            ..Default::default()
-        };
         let db_tx = store.db.begin_write().unwrap();
-        store.persist_local_chain(&db_tx, &changeset).unwrap();
+        store
+            .persist_local_chain(&db_tx, &local_chain_changeset)
+            .unwrap();
         db_tx.commit().unwrap();
         let db_tx = store.db.begin_read().unwrap();
-        let mut changeset = ChangeSet::default();
+        let mut changeset = local_chain::ChangeSet::default();
         store.read_local_chain(&db_tx, &mut changeset).unwrap();
-        assert_eq!(local_chain_changeset, changeset.local_chain);
+        assert_eq!(local_chain_changeset, changeset);
 
         // ******************The following fails****************************
 
@@ -528,19 +546,16 @@ mod test {
             last_seen: [].into(),
         };
 
-        let changeset = ChangeSet {
-            tx_graph: tx_graph_changeset1.clone(),
-            ..Default::default()
-        };
-
         let db_tx = store.db.begin_write().unwrap();
-        store.persist_tx_graph(&db_tx, &changeset).unwrap();
+        store
+            .persist_tx_graph(&db_tx, &tx_graph_changeset1)
+            .unwrap();
         db_tx.commit().unwrap();
 
-        let mut changeset = ChangeSet::default();
+        let mut changeset = tx_graph::ChangeSet::default();
         let db_tx = store.db.begin_read().unwrap();
         store.read_tx_graph(&db_tx, &mut changeset).unwrap();
-        assert_eq!(changeset.tx_graph, tx_graph_changeset1);
+        assert_eq!(changeset, tx_graph_changeset1);
 
         let tx2 = Transaction {
             version: transaction::Version::ONE,
@@ -575,22 +590,19 @@ mod test {
             last_seen: [].into(),
         };
 
-        let changeset = ChangeSet {
-            tx_graph: tx_graph_changeset2.clone(),
-            ..Default::default()
-        };
-
         let db_tx = store.db.begin_write().unwrap();
-        store.persist_tx_graph(&db_tx, &changeset).unwrap();
+        store
+            .persist_tx_graph(&db_tx, &tx_graph_changeset2)
+            .unwrap();
         db_tx.commit().unwrap();
 
-        let mut changeset = ChangeSet::default();
+        let mut changeset = tx_graph::ChangeSet::default();
         let db_tx = store.db.begin_read().unwrap();
         store.read_tx_graph(&db_tx, &mut changeset).unwrap();
 
         tx_graph_changeset1.merge(tx_graph_changeset2);
 
-        assert_eq!(changeset.tx_graph, tx_graph_changeset1);
+        assert_eq!(tx_graph_changeset1, changeset);
     }
 
     fn test_last_revealed_persistence(store: &Store) {
@@ -612,20 +624,17 @@ mod test {
             last_revealed: [(descriptor_ids[0], 1), (descriptor_ids[1], 100)].into(),
         };
 
-        let changeset = ChangeSet {
-            indexer: keychain_txout_changeset.clone(),
-            ..Default::default()
-        };
-
         let db_tx = store.db.begin_write().unwrap();
-        store.persist_last_revealed(&db_tx, &changeset).unwrap();
+        store
+            .persist_last_revealed(&db_tx, &keychain_txout_changeset)
+            .unwrap();
         db_tx.commit().unwrap();
 
-        let mut changeset = ChangeSet::default();
+        let mut changeset = keychain_txout::ChangeSet::default();
         let db_tx = store.db.begin_read().unwrap();
         store.read_last_revealed(&db_tx, &mut changeset).unwrap();
 
-        assert_eq!(changeset.indexer, keychain_txout_changeset);
+        assert_eq!(changeset, keychain_txout_changeset);
     }
 
     #[test]
