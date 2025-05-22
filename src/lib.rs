@@ -372,13 +372,14 @@ mod test {
         keys::DescriptorPublicKey,
     };
     use std::sync::Arc;
-    use std::{collections::BTreeMap, fs::remove_file};
+    use std::collections::BTreeMap;
+    use tempfile::NamedTempFile;
 
     macro_rules! hash {
         ($index:literal) => {{ bitcoin::hashes::Hash::hash($index.as_bytes()) }};
     }
 
-    fn create_test_store(path: &str, wallet_name: &str) -> Store {
+    fn create_test_store(path: impl AsRef<Path>, wallet_name: &str) -> Store {
         let mut store = Store::load_or_create(path, wallet_name.to_string()).unwrap();
         store.create_tables().unwrap();
         store
@@ -429,26 +430,22 @@ mod test {
         assert_eq!(changeset.change_descriptor, Some(change_descriptor));
     }
 
-    fn delete_store(path: &str) {
-        remove_file(path).unwrap();
-    }
-
     #[test]
     fn test_persistence() {
-        let store = create_test_store("test_persistence", "wallet1");
+        let tmpfile = NamedTempFile::new().unwrap();
+        let store = create_test_store(tmpfile.path(), "wallet1");
 
         test_network_persistence(&store);
         test_keychains_persistence(&store);
         test_local_chain_persistence(&store);
         test_tx_graph_persistence(&store);
         test_last_revealed_persistence(&store);
-
-        delete_store("test_persistence");
     }
 
     #[test]
     fn test_single_desc_persistence() {
-        let store = create_test_store("test_single_desc_persistence", "wallet1");
+        let tmpfile = NamedTempFile::new().unwrap();
+        let store = create_test_store(tmpfile.path(), "wallet1");
 
         let db_tx = store.db.begin_write().unwrap();
 
@@ -471,8 +468,6 @@ mod test {
 
         assert_eq!(changeset.descriptor, Some(descriptor));
         assert_eq!(changeset.change_descriptor, None);
-
-        delete_store("test_single_desc_persistence");
     }
 
     fn test_local_chain_persistence(store: &Store) {
@@ -639,7 +634,8 @@ mod test {
 
     #[test]
     fn test_persist_changeset() {
-        let store = create_test_store("test_persist_changeset", "wallet1");
+        let tmpfile = NamedTempFile::new().unwrap();
+        let store = create_test_store(tmpfile.path(), "wallet1");
 
         let descriptor: Descriptor<DescriptorPublicKey> = "tr([5940b9b9/86'/0'/0']tpubDDVNqmq75GNPWQ9UNKfP43UwjaHU4GYfoPavojQbfpyfZp2KetWgjGBRRAy4tYCrAA6SB11mhQAkqxjh1VtQHyKwT4oYxpwLaGHvoKmtxZf/0/*)#44aqnlam".parse().unwrap();
         let change_descriptor: Descriptor<DescriptorPublicKey> = "tr([5940b9b9/86'/0'/0']tpubDDVNqmq75GNPWQ9UNKfP43UwjaHU4GYfoPavojQbfpyfZp2KetWgjGBRRAy4tYCrAA6SB11mhQAkqxjh1VtQHyKwT4oYxpwLaGHvoKmtxZf/1/*)#ypcpw2dr".parse().unwrap();
@@ -702,7 +698,5 @@ mod test {
         store.read_changeset(&mut changeset_read).unwrap();
 
         assert_eq!(changeset_persisted, changeset_read);
-
-        delete_store("test_persist_changeset");
     }
 }
