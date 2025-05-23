@@ -14,39 +14,11 @@ use std::{path::Path, str::FromStr};
 
 const NETWORK: TableDefinition<&str, String> = TableDefinition::new("network");
 const KEYCHAINS: MultimapTableDefinition<&str, String> = MultimapTableDefinition::new("keychains");
-const LOCALCHAIN: TableDefinition<&str, LocalChainChangeSetWrapper> =
+const LOCALCHAIN: TableDefinition<(&str, u32), [u8;32]> =
     TableDefinition::new("local_chain");
 const TXGRAPH: TableDefinition<&str, TxGraphChangeSetWrapper> = TableDefinition::new("tx_graph");
 const LAST_REVEALED: TableDefinition<&str, KeychainChangeSetWrapper> =
     TableDefinition::new("last_revealed");
-
-#[derive(Debug, Serialize, Deserialize)]
-struct LocalChainChangeSetWrapper(bdk_wallet::chain::local_chain::ChangeSet);
-
-impl Value for LocalChainChangeSetWrapper {
-    type SelfType<'a> = LocalChainChangeSetWrapper;
-    type AsBytes<'a> = Vec<u8>;
-    fn fixed_width() -> Option<usize> {
-        None
-    }
-    fn as_bytes<'a, 'b: 'a>(value: &'a Self::SelfType<'b>) -> Self::AsBytes<'a>
-    where
-        Self: 'b,
-    {
-        let mut vec: Vec<u8> = Vec::new();
-        ciborium::into_writer(value, &mut vec).unwrap();
-        vec
-    }
-    fn from_bytes<'a>(data: &'a [u8]) -> Self::SelfType<'a>
-    where
-        Self: 'a,
-    {
-        ciborium::from_reader(data).unwrap()
-    }
-    fn type_name() -> redb::TypeName {
-        TypeName::new("local_chain")
-    }
-}
 
 #[derive(Debug, Serialize, Deserialize)]
 struct TxGraphChangeSetWrapper(tx_graph::ChangeSet<ConfirmationBlockTime>);
@@ -173,19 +145,12 @@ impl Store {
         changeset: &local_chain::ChangeSet,
     ) -> Result<(), BdkRedbError> {
         let mut table = db_tx.open_table(LOCALCHAIN).map_err(redb::Error::from)?;
-        let mut aggregated_changeset = match table.remove(&*self.wallet_name).unwrap() {
-            Some(value) => match value.value() {
-                LocalChainChangeSetWrapper(changeset) => changeset,
-            },
-            None => local_chain::ChangeSet::default(),
-        };
-        aggregated_changeset.merge(changeset.clone());
-        table
-            .insert(
-                &*self.wallet_name,
-                LocalChainChangeSetWrapper(aggregated_changeset),
-            )
-            .unwrap();
+        for (ht,hash) in changeset.blocks {
+            match hash {
+                Some(hash) => table.insert((&*self.wallet_name,ht), ),
+                None => table.remove((&*self.wallet_name, ht)),
+            };
+        }
         Ok(())
     }
 
