@@ -1,52 +1,23 @@
 mod error;
 
-use bdk_wallet::bitcoin::{self, Network};
+use bdk_wallet::bitcoin::{self, Network, hashes::Hash};
 use bdk_wallet::chain::{ConfirmationBlockTime, keychain_txout, local_chain, tx_graph};
 use bdk_wallet::descriptor::{Descriptor, DescriptorPublicKey};
 use bdk_wallet::{ChangeSet, chain::Merge};
 use error::MissingError;
 use redb::{
-    Database, MultimapTableDefinition, ReadTransaction, TableDefinition, TypeName, Value,
-    WriteTransaction,
+    Database, MultimapTableDefinition, ReadTransaction, ReadableTable, TableDefinition, TypeName,
+    Value, WriteTransaction,
 };
 use serde::{Deserialize, Serialize};
 use std::{path::Path, str::FromStr};
 
 const NETWORK: TableDefinition<&str, String> = TableDefinition::new("network");
 const KEYCHAINS: MultimapTableDefinition<&str, String> = MultimapTableDefinition::new("keychains");
-const LOCALCHAIN: TableDefinition<&str, LocalChainChangeSetWrapper> =
-    TableDefinition::new("local_chain");
+const LOCALCHAIN: TableDefinition<(&str, u32), [u8; 32]> = TableDefinition::new("local_chain");
 const TXGRAPH: TableDefinition<&str, TxGraphChangeSetWrapper> = TableDefinition::new("tx_graph");
 const LAST_REVEALED: TableDefinition<&str, KeychainChangeSetWrapper> =
     TableDefinition::new("last_revealed");
-
-#[derive(Debug, Serialize, Deserialize)]
-struct LocalChainChangeSetWrapper(bdk_wallet::chain::local_chain::ChangeSet);
-
-impl Value for LocalChainChangeSetWrapper {
-    type SelfType<'a> = LocalChainChangeSetWrapper;
-    type AsBytes<'a> = Vec<u8>;
-    fn fixed_width() -> Option<usize> {
-        None
-    }
-    fn as_bytes<'a, 'b: 'a>(value: &'a Self::SelfType<'b>) -> Self::AsBytes<'a>
-    where
-        Self: 'b,
-    {
-        let mut vec: Vec<u8> = Vec::new();
-        ciborium::into_writer(value, &mut vec).unwrap();
-        vec
-    }
-    fn from_bytes<'a>(data: &'a [u8]) -> Self::SelfType<'a>
-    where
-        Self: 'a,
-    {
-        ciborium::from_reader(data).unwrap()
-    }
-    fn type_name() -> redb::TypeName {
-        TypeName::new("local_chain")
-    }
-}
 
 #[derive(Debug, Serialize, Deserialize)]
 struct TxGraphChangeSetWrapper(tx_graph::ChangeSet<ConfirmationBlockTime>);
@@ -173,19 +144,14 @@ impl Store {
         changeset: &local_chain::ChangeSet,
     ) -> Result<(), BdkRedbError> {
         let mut table = db_tx.open_table(LOCALCHAIN).map_err(redb::Error::from)?;
-        let mut aggregated_changeset = match table.remove(&*self.wallet_name).unwrap() {
-            Some(value) => match value.value() {
-                LocalChainChangeSetWrapper(changeset) => changeset,
-            },
-            None => local_chain::ChangeSet::default(),
-        };
-        aggregated_changeset.merge(changeset.clone());
-        table
-            .insert(
-                &*self.wallet_name,
-                LocalChainChangeSetWrapper(aggregated_changeset),
-            )
-            .unwrap();
+        for (ht, hash) in &changeset.blocks {
+            match hash {
+                Some(hash) => table
+                    .insert((&*self.wallet_name, *ht), hash.as_ref())
+                    .unwrap(),
+                None => table.remove((&*self.wallet_name, *ht)).unwrap(),
+            };
+        }
         Ok(())
     }
 
@@ -309,11 +275,42 @@ impl Store {
         &self,
         db_tx: &ReadTransaction,
         changeset: &mut local_chain::ChangeSet,
+        chain_height: Option<u32>,
     ) -> Result<(), BdkRedbError> {
-        let table = db_tx.open_table(LOCALCHAIN).map_err(redb::Error::from)?;
-        let LocalChainChangeSetWrapper(local_chain) =
-            table.get(&*self.wallet_name).unwrap().unwrap().value();
-        *changeset = local_chain;
+        let table = db_tx
+            .open_table(LOCALCHAIN)
+            .map_err(redb::Error::from)
+            .unwrap();
+
+        match chain_height {
+            Some(chain_height) => {
+                for pos in 0..=chain_height {
+                    let hash = table
+                        .get((&*self.wallet_name, pos))
+                        .unwrap()
+                        .unwrap()
+                        .value();
+                    changeset
+                        .blocks
+                        .insert(pos, Some(bitcoin::BlockHash::from_byte_array(hash)));
+                }
+            }
+            None => {
+                // iterate over all entries in the table 😱 (increased loading times!)
+                table
+                    .iter()
+                    .unwrap()
+                    .filter(|entry| *entry.as_ref().unwrap().0.value().0 == *self.wallet_name)
+                    .for_each(|entry| {
+                        changeset.blocks.insert(
+                            entry.as_ref().unwrap().0.value().1,
+                            Some(bitcoin::BlockHash::from_byte_array(
+                                entry.as_ref().unwrap().1.value(),
+                            )),
+                        );
+                    });
+            }
+        }
         Ok(())
     }
 
@@ -350,7 +347,7 @@ impl Store {
             &mut changeset.descriptor,
             &mut changeset.change_descriptor,
         )?;
-        self.read_local_chain(&db_tx, &mut changeset.local_chain)?;
+        self.read_local_chain(&db_tx, &mut changeset.local_chain, None)?;
         self.read_tx_graph(&db_tx, &mut changeset.tx_graph)?;
         self.read_last_revealed(&db_tx, &mut changeset.indexer)?;
 
@@ -371,8 +368,8 @@ mod test {
         descriptor::Descriptor,
         keys::DescriptorPublicKey,
     };
-    use std::sync::Arc;
     use std::collections::BTreeMap;
+    use std::sync::Arc;
     use tempfile::NamedTempFile;
 
     macro_rules! hash {
@@ -475,6 +472,7 @@ mod test {
         blocks.insert(0u32, Some(hash!("B")));
         blocks.insert(1u32, Some(hash!("D")));
         blocks.insert(2u32, Some(hash!("K")));
+
         let local_chain_changeset = local_chain::ChangeSet { blocks };
         let db_tx = store.db.begin_write().unwrap();
         store
@@ -483,31 +481,32 @@ mod test {
         db_tx.commit().unwrap();
         let db_tx = store.db.begin_read().unwrap();
         let mut changeset = local_chain::ChangeSet::default();
-        store.read_local_chain(&db_tx, &mut changeset).unwrap();
+        store
+            .read_local_chain(&db_tx, &mut changeset, None)
+            .unwrap();
         assert_eq!(local_chain_changeset, changeset);
 
-        // ******************The following fails****************************
+        let mut blocks: BTreeMap<u32, Option<BlockHash>> = BTreeMap::new();
+        blocks.insert(2u32, None);
+        let local_chain_changeset = local_chain::ChangeSet { blocks };
 
-        // let mut blocks: BTreeMap<u32, Option<BlockHash>> = BTreeMap::new();
-        // blocks.insert(2u32, None);
-        // let local_chain_changeset = local_chain::ChangeSet { blocks };
-        // let mut changeset = ChangeSet {
-        //     local_chain: local_chain_changeset.clone(),
-        //     ..Default::default()
-        // };
-        // let db_tx = store.db.begin_write().unwrap();
-        // store.persist_local_chain(&db_tx, &mut changeset).unwrap();
-        // db_tx.commit().unwrap();
-        // let db_tx = store.db.begin_read().unwrap();
-        // let mut changeset = ChangeSet::default();
-        // store.read_local_chain(&db_tx, &mut changeset).unwrap();
+        let db_tx = store.db.begin_write().unwrap();
+        store
+            .persist_local_chain(&db_tx, &local_chain_changeset)
+            .unwrap();
+        db_tx.commit().unwrap();
+        let db_tx = store.db.begin_read().unwrap();
+        let mut changeset = ChangeSet::default();
+        store
+            .read_local_chain(&db_tx, &mut changeset.local_chain, None)
+            .unwrap();
 
-        // let mut blocks: BTreeMap<u32, Option<BlockHash>> = BTreeMap::new();
-        // blocks.insert(0u32, Some(hash!("B")));
-        // blocks.insert(1u32, Some(hash!("D")));
-        // let local_chain_changeset = local_chain::ChangeSet { blocks };
+        let mut blocks: BTreeMap<u32, Option<BlockHash>> = BTreeMap::new();
+        blocks.insert(0u32, Some(hash!("B")));
+        blocks.insert(1u32, Some(hash!("D")));
+        let local_chain_changeset = local_chain::ChangeSet { blocks };
 
-        // assert_eq!(local_chain_changeset, changeset.local_chain);
+        assert_eq!(local_chain_changeset, changeset.local_chain);
     }
 
     fn test_tx_graph_persistence(store: &Store) {
