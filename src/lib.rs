@@ -1,7 +1,9 @@
 mod error;
 
 use bdk_wallet::bitcoin::{self, Network, hashes::Hash};
-use bdk_wallet::chain::{ConfirmationBlockTime, keychain_txout, local_chain, tx_graph};
+use bdk_wallet::chain::{
+    ConfirmationBlockTime, DescriptorId, keychain_txout, local_chain, tx_graph,
+};
 use bdk_wallet::descriptor::{Descriptor, DescriptorPublicKey};
 use bdk_wallet::{ChangeSet, chain::Merge};
 use error::MissingError;
@@ -16,8 +18,7 @@ const NETWORK: TableDefinition<&str, String> = TableDefinition::new("network");
 const KEYCHAINS: MultimapTableDefinition<&str, String> = MultimapTableDefinition::new("keychains");
 const LOCALCHAIN: TableDefinition<(&str, u32), [u8; 32]> = TableDefinition::new("local_chain");
 const TXGRAPH: TableDefinition<&str, TxGraphChangeSetWrapper> = TableDefinition::new("tx_graph");
-const LAST_REVEALED: TableDefinition<&str, KeychainChangeSetWrapper> =
-    TableDefinition::new("last_revealed");
+const LAST_REVEALED: TableDefinition<(&str, [u8; 32]), u32> = TableDefinition::new("last_revealed");
 
 #[derive(Debug, Serialize, Deserialize)]
 struct TxGraphChangeSetWrapper(tx_graph::ChangeSet<ConfirmationBlockTime>);
@@ -44,34 +45,6 @@ impl Value for TxGraphChangeSetWrapper {
     }
     fn type_name() -> redb::TypeName {
         TypeName::new("tx_graph")
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct KeychainChangeSetWrapper(keychain_txout::ChangeSet);
-
-impl Value for KeychainChangeSetWrapper {
-    type SelfType<'a> = KeychainChangeSetWrapper;
-    type AsBytes<'a> = Vec<u8>;
-    fn fixed_width() -> Option<usize> {
-        None
-    }
-    fn as_bytes<'a, 'b: 'a>(value: &'a Self::SelfType<'b>) -> Self::AsBytes<'a>
-    where
-        Self: 'b,
-    {
-        let mut vec: Vec<u8> = Vec::new();
-        ciborium::into_writer(value, &mut vec).unwrap();
-        vec
-    }
-    fn from_bytes<'a>(data: &'a [u8]) -> Self::SelfType<'a>
-    where
-        Self: 'a,
-    {
-        ciborium::from_reader(data).unwrap()
-    }
-    fn type_name() -> redb::TypeName {
-        TypeName::new("last_revealed")
     }
 }
 
@@ -183,19 +156,11 @@ impl Store {
         changeset: &keychain_txout::ChangeSet,
     ) -> Result<(), BdkRedbError> {
         let mut table = db_tx.open_table(LAST_REVEALED).map_err(redb::Error::from)?;
-        let mut aggregated_changeset = match table.remove(&*self.wallet_name).unwrap() {
-            Some(value) => match value.value() {
-                KeychainChangeSetWrapper(changeset) => changeset,
-            },
-            None => keychain_txout::ChangeSet::default(),
-        };
-        aggregated_changeset.merge(changeset.clone());
-        table
-            .insert(
-                &*self.wallet_name,
-                KeychainChangeSetWrapper(aggregated_changeset),
-            )
-            .unwrap();
+        for (desc, idx) in &changeset.last_revealed {
+            table
+                .insert((&*self.wallet_name, desc.to_byte_array()), idx)
+                .unwrap();
+        }
         Ok(())
     }
 
@@ -330,11 +295,35 @@ impl Store {
         &self,
         db_tx: &ReadTransaction,
         changeset: &mut keychain_txout::ChangeSet,
+        desc_ids: Option<Vec<[u8; 32]>>,
     ) -> Result<(), BdkRedbError> {
         let table = db_tx.open_table(LAST_REVEALED).map_err(redb::Error::from)?;
-        let KeychainChangeSetWrapper(indexer) =
-            table.get(&*self.wallet_name).unwrap().unwrap().value();
-        *changeset = indexer;
+        match desc_ids {
+            Some(desc_ids) => {
+                for id in desc_ids {
+                    changeset.last_revealed.insert(
+                        DescriptorId::from_byte_array(id),
+                        table
+                            .get((&*self.wallet_name, id))
+                            .unwrap()
+                            .unwrap()
+                            .value(),
+                    );
+                }
+            }
+            None => {
+                table
+                    .iter()
+                    .unwrap()
+                    .filter(|entry| entry.as_ref().unwrap().0.value().0 == &*self.wallet_name)
+                    .for_each(|entry| {
+                        changeset.last_revealed.insert(
+                            DescriptorId::from_byte_array(entry.as_ref().unwrap().0.value().1),
+                            entry.as_ref().unwrap().1.value(),
+                        );
+                    });
+            }
+        }
         Ok(())
     }
 
@@ -349,7 +338,7 @@ impl Store {
         )?;
         self.read_local_chain(&db_tx, &mut changeset.local_chain, None)?;
         self.read_tx_graph(&db_tx, &mut changeset.tx_graph)?;
-        self.read_last_revealed(&db_tx, &mut changeset.indexer)?;
+        self.read_last_revealed(&db_tx, &mut changeset.indexer, None)?;
 
         Ok(())
     }
@@ -626,7 +615,9 @@ mod test {
 
         let mut changeset = keychain_txout::ChangeSet::default();
         let db_tx = store.db.begin_read().unwrap();
-        store.read_last_revealed(&db_tx, &mut changeset).unwrap();
+        store
+            .read_last_revealed(&db_tx, &mut changeset, None)
+            .unwrap();
 
         assert_eq!(changeset, keychain_txout_changeset);
     }
