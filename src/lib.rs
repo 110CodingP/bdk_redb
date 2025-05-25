@@ -8,8 +8,7 @@ use bdk_wallet::descriptor::{Descriptor, DescriptorPublicKey};
 use bdk_wallet::{ChangeSet, chain::Merge};
 use error::MissingError;
 use redb::{
-    Database, MultimapTableDefinition, ReadTransaction, ReadableTable, TableDefinition, TypeName,
-    Value, WriteTransaction,
+    Database, MultimapTableDefinition, ReadTransaction, ReadableTable, Key, TableDefinition, TypeName, Value, WriteTransaction
 };
 use serde::{Deserialize, Serialize};
 use std::{path::Path, str::FromStr};
@@ -19,7 +18,42 @@ const KEYCHAINS: MultimapTableDefinition<&str, String> = MultimapTableDefinition
 const LOCALCHAIN: TableDefinition<(&str, u32), [u8; 32]> = TableDefinition::new("local_chain");
 const TXGRAPH: TableDefinition<&str, TxGraphChangeSetWrapper> = TableDefinition::new("tx_graph");
 const LAST_REVEALED: TableDefinition<(&str, [u8; 32]), u32> = TableDefinition::new("last_revealed");
+const TXOUTS: MultimapTableDefinition<&str, (([u8; 32], u32),(u64, Script))> = MultimapTableDefinition::new("txouts");
 const LAST_SEEN: TableDefinition<(&str, [u8; 32]), u64> = TableDefinition::new("last_seen");
+
+
+#[derive(Debug, Serialize, Deserialize)]
+struct Script(Vec<u8>);
+impl Value for Script {
+    type SelfType<'a> = Script;
+    type AsBytes<'a> = Vec<u8>;
+    fn fixed_width() -> Option<usize> {
+        None
+    }
+    fn as_bytes<'a, 'b: 'a>(value: &'a Self::SelfType<'b>) -> Self::AsBytes<'a>
+    where
+        Self: 'b,
+    {
+        value.0.clone()
+    }
+    fn from_bytes<'a>(data: &'a [u8]) -> Self::SelfType<'a>
+    where
+        Self: 'a,
+    {
+        Script(data.to_vec())
+    }
+    fn type_name() -> redb::TypeName {
+        TypeName::new("tx_graph")
+    }
+}
+
+impl Key for Script {
+    fn compare(data1: &[u8], data2: &[u8]) -> std::cmp::Ordering {
+        let vec1 = data1.to_vec();
+        let vec2 = data2.to_vec();
+        vec1[0].cmp(&vec2[0])
+    }
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 struct TxGraphChangeSetWrapper(tx_graph::ChangeSet<ConfirmationBlockTime>);
