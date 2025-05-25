@@ -19,6 +19,7 @@ const KEYCHAINS: MultimapTableDefinition<&str, String> = MultimapTableDefinition
 const LOCALCHAIN: TableDefinition<(&str, u32), [u8; 32]> = TableDefinition::new("local_chain");
 const TXGRAPH: TableDefinition<&str, TxGraphChangeSetWrapper> = TableDefinition::new("tx_graph");
 const LAST_REVEALED: TableDefinition<(&str, [u8; 32]), u32> = TableDefinition::new("last_revealed");
+const LAST_SEEN: TableDefinition<(&str, [u8; 32]), u64> = TableDefinition::new("last_seen");
 
 #[derive(Debug, Serialize, Deserialize)]
 struct TxGraphChangeSetWrapper(tx_graph::ChangeSet<ConfirmationBlockTime>);
@@ -124,6 +125,20 @@ impl Store {
                     .unwrap(),
                 None => table.remove((&*self.wallet_name, *ht)).unwrap(),
             };
+        }
+        Ok(())
+    }
+
+    pub fn persist_last_seen(
+        &self,
+        db_tx: &WriteTransaction,
+        changeset: &tx_graph::ChangeSet<ConfirmationBlockTime>,
+    ) -> Result<(), BdkRedbError> {
+        let mut table = db_tx.open_table(LAST_SEEN).map_err(redb::Error::from)?;
+        for (txid, last_seen) in &changeset.last_seen {
+            table
+                .insert((&*self.wallet_name, txid.to_byte_array()), *last_seen)
+                .unwrap();
         }
         Ok(())
     }
@@ -279,6 +294,25 @@ impl Store {
         Ok(())
     }
 
+    pub fn read_last_seen(
+        &self,
+        db_tx: &ReadTransaction,
+        changeset: &mut tx_graph::ChangeSet<ConfirmationBlockTime>,
+    ) -> Result<(), BdkRedbError> {
+        let table = db_tx.open_table(LAST_SEEN).map_err(redb::Error::from)?;
+        table
+            .iter()
+            .unwrap()
+            .filter(|entry| entry.as_ref().unwrap().0.value().0 == &*self.wallet_name)
+            .for_each(|entry| {
+                changeset.last_seen.insert(
+                    bitcoin::Txid::from_byte_array(entry.as_ref().unwrap().0.value().1),
+                    entry.as_ref().unwrap().1.value(),
+                );
+            });
+        Ok(())
+    }
+
     pub fn read_tx_graph(
         &self,
         db_tx: &ReadTransaction,
@@ -351,7 +385,7 @@ mod test {
     use bdk_wallet::{
         bitcoin::{
             self, Amount, BlockHash, OutPoint, ScriptBuf, Transaction, TxIn, TxOut, absolute,
-            transaction,
+            transaction, transaction::Txid,
         },
         chain::{DescriptorExt, local_chain},
         descriptor::Descriptor,
@@ -496,6 +530,33 @@ mod test {
         let local_chain_changeset = local_chain::ChangeSet { blocks };
 
         assert_eq!(local_chain_changeset, changeset.local_chain);
+    }
+
+    #[test]
+    fn test_persist_last_seen() {
+        let tmpfile = NamedTempFile::new().unwrap();
+        let store = create_test_store(tmpfile, "wallet_1");
+        let tx_graph_changeset1 = tx_graph::ChangeSet::<ConfirmationBlockTime> {
+            txs: [].into(),
+            txouts: [].into(),
+            anchors: [].into(),
+            last_seen: [
+                (Txid::from_byte_array([0; 32]), 100),
+                (Txid::from_byte_array([1; 32]), 120),
+            ]
+            .into(),
+        };
+
+        let db_tx = store.db.begin_write().unwrap();
+        store
+            .persist_last_seen(&db_tx, &tx_graph_changeset1)
+            .unwrap();
+        db_tx.commit().unwrap();
+
+        let db_tx = store.db.begin_read().unwrap();
+        let mut changeset = tx_graph::ChangeSet::<ConfirmationBlockTime>::default();
+        store.read_last_seen(&db_tx, &mut changeset).unwrap();
+        assert_eq!(changeset.last_seen, tx_graph_changeset1.last_seen);
     }
 
     fn test_tx_graph_persistence(store: &Store) {
