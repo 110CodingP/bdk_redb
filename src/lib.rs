@@ -8,7 +8,8 @@ use bdk_wallet::descriptor::{Descriptor, DescriptorPublicKey};
 use bdk_wallet::{ChangeSet, chain::Merge};
 use error::MissingError;
 use redb::{
-    Database, MultimapTableDefinition, ReadTransaction, ReadableTable, Key, TableDefinition, TypeName, Value, WriteTransaction
+    Database, Key, MultimapTableDefinition, ReadTransaction, ReadableTable, TableDefinition,
+    TypeName, Value, WriteTransaction,
 };
 use serde::{Deserialize, Serialize};
 use std::{path::Path, str::FromStr};
@@ -18,9 +19,9 @@ const KEYCHAINS: MultimapTableDefinition<&str, String> = MultimapTableDefinition
 const LOCALCHAIN: TableDefinition<(&str, u32), [u8; 32]> = TableDefinition::new("local_chain");
 const TXGRAPH: TableDefinition<&str, TxGraphChangeSetWrapper> = TableDefinition::new("tx_graph");
 const LAST_REVEALED: TableDefinition<(&str, [u8; 32]), u32> = TableDefinition::new("last_revealed");
-const TXOUTS: MultimapTableDefinition<&str, (([u8; 32], u32),(u64, Script))> = MultimapTableDefinition::new("txouts");
+const TXOUTS: MultimapTableDefinition<&str, (([u8; 32], u32), (u64, Script))> =
+    MultimapTableDefinition::new("txouts");
 const LAST_SEEN: TableDefinition<(&str, [u8; 32]), u64> = TableDefinition::new("last_seen");
-
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Script(Vec<u8>);
