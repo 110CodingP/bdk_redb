@@ -1,6 +1,7 @@
 mod error;
 
-use bdk_wallet::bitcoin::{self, Network, hashes::Hash};
+use bdk_wallet::bitcoin::{self, Amount, Network, OutPoint, Txid, hashes::Hash};
+use bdk_wallet::bitcoin::{ScriptBuf, TxOut};
 use bdk_wallet::chain::{
     ConfirmationBlockTime, DescriptorId, keychain_txout, local_chain, tx_graph,
 };
@@ -178,6 +179,28 @@ impl Store {
         Ok(())
     }
 
+    pub fn persist_txouts(
+        &self,
+        db_tx: &WriteTransaction,
+        changeset: &tx_graph::ChangeSet<ConfirmationBlockTime>,
+    ) -> Result<(), BdkRedbError> {
+        let mut table = db_tx
+            .open_multimap_table(TXOUTS)
+            .map_err(redb::Error::from)?;
+        for (outpoint, txout) in &changeset.txouts {
+            table
+                .insert(
+                    &*self.wallet_name,
+                    (
+                        (outpoint.txid.to_byte_array(), outpoint.vout),
+                        (txout.value.to_sat(), Script(txout.script_pubkey.to_bytes())),
+                    ),
+                )
+                .unwrap();
+        }
+        Ok(())
+    }
+
     pub fn persist_tx_graph(
         &self,
         db_tx: &WriteTransaction,
@@ -345,6 +368,27 @@ impl Store {
                     entry.as_ref().unwrap().1.value(),
                 );
             });
+        Ok(())
+    }
+
+    pub fn read_txouts(
+        &self,
+        db_tx: &ReadTransaction,
+        changeset: &mut tx_graph::ChangeSet<ConfirmationBlockTime>,
+    ) -> Result<(), BdkRedbError> {
+        let table = db_tx.open_multimap_table(TXOUTS).unwrap();
+        table.get(&*self.wallet_name).unwrap().for_each(|entry| {
+            changeset.txouts.insert(
+                OutPoint {
+                    txid: Txid::from_byte_array(entry.as_ref().unwrap().value().0.0),
+                    vout: entry.as_ref().unwrap().value().0.1,
+                },
+                TxOut {
+                    value: Amount::from_sat(entry.as_ref().unwrap().value().1.0),
+                    script_pubkey: ScriptBuf::from_bytes(entry.as_ref().unwrap().value().1.1.0),
+                },
+            );
+        });
         Ok(())
     }
 
@@ -592,6 +636,49 @@ mod test {
         let mut changeset = tx_graph::ChangeSet::<ConfirmationBlockTime>::default();
         store.read_last_seen(&db_tx, &mut changeset).unwrap();
         assert_eq!(changeset.last_seen, tx_graph_changeset1.last_seen);
+    }
+
+    #[test]
+    fn test_persist_txouts() {
+        let tmpfile = NamedTempFile::new().unwrap();
+        let store = create_test_store(tmpfile, "wallet_1");
+        let tx_graph_changeset1 = tx_graph::ChangeSet::<ConfirmationBlockTime> {
+            txs: [].into(),
+            txouts: [
+                (
+                    OutPoint {
+                        txid: Txid::from_byte_array([0; 32]),
+                        vout: 0,
+                    },
+                    TxOut {
+                        value: Amount::from_sat(1300),
+                        script_pubkey: ScriptBuf::from_bytes(vec![0]),
+                    },
+                ),
+                (
+                    OutPoint {
+                        txid: Txid::from_byte_array([1; 32]),
+                        vout: 0,
+                    },
+                    TxOut {
+                        value: Amount::from_sat(1400),
+                        script_pubkey: ScriptBuf::from_bytes(vec![2]),
+                    },
+                ),
+            ]
+            .into(),
+            anchors: [].into(),
+            last_seen: [].into(),
+        };
+
+        let db_tx = store.db.begin_write().unwrap();
+        store.persist_txouts(&db_tx, &tx_graph_changeset1).unwrap();
+        db_tx.commit().unwrap();
+
+        let db_tx = store.db.begin_read().unwrap();
+        let mut changeset = tx_graph::ChangeSet::<ConfirmationBlockTime>::default();
+        store.read_txouts(&db_tx, &mut changeset).unwrap();
+        assert_eq!(changeset.txouts, tx_graph_changeset1.txouts);
     }
 
     fn test_tx_graph_persistence(store: &Store) {
