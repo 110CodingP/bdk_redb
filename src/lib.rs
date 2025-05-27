@@ -13,6 +13,7 @@ use redb::{
     TypeName, Value, WriteTransaction,
 };
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use std::{path::Path, str::FromStr};
 
 const NETWORK: TableDefinition<&str, String> = TableDefinition::new("network");
@@ -22,6 +23,8 @@ const TXGRAPH: TableDefinition<&str, TxGraphChangeSetWrapper> = TableDefinition:
 const LAST_REVEALED: TableDefinition<(&str, [u8; 32]), u32> = TableDefinition::new("last_revealed");
 const TXOUTS: MultimapTableDefinition<&str, (([u8; 32], u32), (u64, Script))> =
     MultimapTableDefinition::new("txouts");
+const TXS: MultimapTableDefinition<&str, ([u8; 32], TransactionWrapper)> =
+    MultimapTableDefinition::new("txs");
 const LAST_SEEN: TableDefinition<(&str, [u8; 32]), u64> = TableDefinition::new("last_seen");
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -54,6 +57,41 @@ impl Key for Script {
         let vec1 = data1.to_vec();
         let vec2 = data2.to_vec();
         vec1[0].cmp(&vec2[0])
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct TransactionWrapper(bitcoin::Transaction);
+impl Value for TransactionWrapper {
+    type SelfType<'a> = TransactionWrapper;
+    type AsBytes<'a> = Vec<u8>;
+    fn fixed_width() -> Option<usize> {
+        None
+    }
+    fn as_bytes<'a, 'b: 'a>(value: &'a Self::SelfType<'b>) -> Self::AsBytes<'a>
+    where
+        Self: 'b,
+    {
+        let mut vec: Vec<u8> = Vec::new();
+        ciborium::into_writer(value, &mut vec).unwrap();
+        vec
+    }
+    fn from_bytes<'a>(data: &'a [u8]) -> Self::SelfType<'a>
+    where
+        Self: 'a,
+    {
+        ciborium::from_reader(data).unwrap()
+    }
+    fn type_name() -> redb::TypeName {
+        TypeName::new("transaction")
+    }
+}
+
+impl Key for TransactionWrapper {
+    fn compare(data1: &[u8], data2: &[u8]) -> std::cmp::Ordering {
+        let tx1: TransactionWrapper = ciborium::from_reader(data1).unwrap();
+        let tx2: TransactionWrapper = ciborium::from_reader(data2).unwrap();
+        tx1.0.version.cmp(&tx2.0.version)
     }
 }
 
@@ -194,6 +232,26 @@ impl Store {
                     (
                         (outpoint.txid.to_byte_array(), outpoint.vout),
                         (txout.value.to_sat(), Script(txout.script_pubkey.to_bytes())),
+                    ),
+                )
+                .unwrap();
+        }
+        Ok(())
+    }
+
+    pub fn persist_txs(
+        &self,
+        db_tx: &WriteTransaction,
+        changeset: &tx_graph::ChangeSet<ConfirmationBlockTime>,
+    ) -> Result<(), BdkRedbError> {
+        let mut table = db_tx.open_multimap_table(TXS).map_err(redb::Error::from)?;
+        for tx in &changeset.txs {
+            table
+                .insert(
+                    &*self.wallet_name,
+                    (
+                        tx.compute_txid().to_byte_array(),
+                        TransactionWrapper((**tx).clone()),
                     ),
                 )
                 .unwrap();
@@ -440,6 +498,18 @@ impl Store {
         Ok(())
     }
 
+    pub fn read_txs(
+        &self,
+        db_tx: &ReadTransaction,
+        changeset: &mut tx_graph::ChangeSet<ConfirmationBlockTime>,
+    ) -> Result<(), BdkRedbError> {
+        let table = db_tx.open_multimap_table(TXS).unwrap();
+        table.get(&*self.wallet_name).unwrap().for_each(|entry| {
+            changeset.txs.insert(Arc::new(entry.unwrap().value().1.0));
+        });
+        Ok(())
+    }
+
     pub fn read_changeset(&self, changeset: &mut ChangeSet) -> Result<(), BdkRedbError> {
         let db_tx = self.db.begin_read().unwrap();
 
@@ -678,6 +748,57 @@ mod test {
         let db_tx = store.db.begin_read().unwrap();
         let mut changeset = tx_graph::ChangeSet::<ConfirmationBlockTime>::default();
         store.read_txouts(&db_tx, &mut changeset).unwrap();
+        assert_eq!(changeset.txouts, tx_graph_changeset1.txouts);
+    }
+
+    #[test]
+    fn test_persist_txs() {
+        let tmpfile = NamedTempFile::new().unwrap();
+        let store = create_test_store(tmpfile, "wallet_1");
+
+        let tx1 = Transaction {
+            version: transaction::Version::ONE,
+            lock_time: absolute::LockTime::ZERO,
+            input: vec![TxIn {
+                previous_output: OutPoint::null(),
+                ..Default::default()
+            }],
+            output: vec![TxOut {
+                value: Amount::from_sat(30_000),
+                script_pubkey: ScriptBuf::new(),
+            }],
+        };
+
+        let tx2 = Transaction {
+            version: transaction::Version::TWO,
+            lock_time: absolute::LockTime::ZERO,
+            input: vec![TxIn {
+                previous_output: OutPoint {
+                    txid: tx1.compute_txid(),
+                    vout: 0,
+                },
+                ..Default::default()
+            }],
+            output: vec![TxOut {
+                value: Amount::from_sat(20_000),
+                script_pubkey: ScriptBuf::new(),
+            }],
+        };
+
+        let tx_graph_changeset1 = tx_graph::ChangeSet::<ConfirmationBlockTime> {
+            txs: [Arc::new(tx1), Arc::new(tx2)].into(),
+            txouts: [].into(),
+            anchors: [].into(),
+            last_seen: [].into(),
+        };
+
+        let db_tx = store.db.begin_write().unwrap();
+        store.persist_txs(&db_tx, &tx_graph_changeset1).unwrap();
+        db_tx.commit().unwrap();
+
+        let db_tx = store.db.begin_read().unwrap();
+        let mut changeset = tx_graph::ChangeSet::<ConfirmationBlockTime>::default();
+        store.read_txs(&db_tx, &mut changeset).unwrap();
         assert_eq!(changeset.txouts, tx_graph_changeset1.txouts);
     }
 
