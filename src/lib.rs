@@ -16,8 +16,6 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::{path::Path, str::FromStr};
 
-const NETWORK: TableDefinition<&str, String> = TableDefinition::new("network");
-const KEYCHAINS: MultimapTableDefinition<&str, String> = MultimapTableDefinition::new("keychains");
 const LOCALCHAIN: TableDefinition<(&str, u32), [u8; 32]> = TableDefinition::new("local_chain");
 const TXGRAPH: TableDefinition<&str, TxGraphChangeSetWrapper> = TableDefinition::new("tx_graph");
 const LAST_REVEALED: TableDefinition<(&str, [u8; 32]), u32> = TableDefinition::new("last_revealed");
@@ -135,15 +133,34 @@ pub enum BdkRedbError {
 pub struct Store {
     db: Database,
     wallet_name: String,
+    network_table_name: String,
+    keychain_table_name: String,
 }
 
 impl Store {
+    pub fn get_network_table_defn(&self) -> TableDefinition<&'static str, String> {
+        TableDefinition::new(&self.network_table_name)
+    }
+
+    pub fn get_keychains_table_defn(&self) -> MultimapTableDefinition<&'static str, String> {
+        MultimapTableDefinition::new(&self.keychain_table_name)
+    }
+
     pub fn load_or_create<P>(file_path: P, wallet_name: String) -> Result<Self, BdkRedbError>
     where
         P: AsRef<Path>,
     {
         let db = Database::create(file_path).map_err(redb::Error::from)?;
-        Ok(Store { db, wallet_name })
+        let mut network_table_name = wallet_name.clone();
+        network_table_name.push_str("_network");
+        let mut keychain_table_name = wallet_name.clone();
+        keychain_table_name.push_str("_keychain");
+        Ok(Store {
+            db,
+            wallet_name,
+            network_table_name,
+            keychain_table_name,
+        })
     }
 
     pub fn persist_network(
@@ -151,7 +168,9 @@ impl Store {
         db_tx: &WriteTransaction,
         network: &Option<bitcoin::Network>,
     ) -> Result<(), BdkRedbError> {
-        let mut table = db_tx.open_table(NETWORK).map_err(redb::Error::from)?;
+        let mut table = db_tx
+            .open_table(self.get_network_table_defn())
+            .map_err(redb::Error::from)?;
 
         // assuming network will be persisted once and only once
         if let Some(network) = network {
@@ -167,7 +186,7 @@ impl Store {
         change_desc: &Option<Descriptor<DescriptorPublicKey>>,
     ) -> Result<(), BdkRedbError> {
         let mut table = db_tx
-            .open_multimap_table(KEYCHAINS)
+            .open_multimap_table(self.get_keychains_table_defn())
             .map_err(redb::Error::from)?;
 
         // assuming descriptor would be persisted once and only once for whole lifetime of wallet.
@@ -311,8 +330,8 @@ impl Store {
     pub fn create_tables(&mut self) -> Result<(), BdkRedbError> {
         let db_tx = self.db.begin_write().map_err(redb::Error::from)?;
 
-        let _ = db_tx.open_table(NETWORK);
-        let _ = db_tx.open_multimap_table(KEYCHAINS);
+        let _ = db_tx.open_table(self.get_network_table_defn());
+        let _ = db_tx.open_multimap_table(self.get_keychains_table_defn());
 
         db_tx.commit().map_err(redb::Error::from)?;
         Ok(())
@@ -323,7 +342,9 @@ impl Store {
         db_tx: &ReadTransaction,
         network: &mut Option<bitcoin::Network>,
     ) -> Result<(), BdkRedbError> {
-        let table = db_tx.open_table(NETWORK).map_err(redb::Error::from)?;
+        let table = db_tx
+            .open_table(self.get_network_table_defn())
+            .map_err(redb::Error::from)?;
         *network = match table.get(&*self.wallet_name).map_err(redb::Error::from)? {
             Some(network) => Some(Network::from_str(&network.value()).expect("parse network")),
             None => {
@@ -342,7 +363,7 @@ impl Store {
         change_desc: &mut Option<Descriptor<DescriptorPublicKey>>,
     ) -> Result<(), BdkRedbError> {
         let table = db_tx
-            .open_multimap_table(KEYCHAINS)
+            .open_multimap_table(self.get_keychains_table_defn())
             .map_err(redb::Error::from)?;
 
         // ToDo: Make the following idiomatic
