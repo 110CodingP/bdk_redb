@@ -1,7 +1,7 @@
 mod error;
 
 use bdk_wallet::bitcoin::{self, Amount, Network, OutPoint, Txid, hashes::Hash};
-use bdk_wallet::bitcoin::{ScriptBuf, TxOut};
+use bdk_wallet::bitcoin::{BlockHash, ScriptBuf, TxOut};
 use bdk_wallet::chain::{
     ConfirmationBlockTime, DescriptorId, keychain_txout, local_chain, tx_graph,
 };
@@ -16,7 +16,6 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::{path::Path, str::FromStr};
 
-const LOCALCHAIN: TableDefinition<(&str, u32), [u8; 32]> = TableDefinition::new("local_chain");
 const TXGRAPH: TableDefinition<&str, TxGraphChangeSetWrapper> = TableDefinition::new("tx_graph");
 const TXOUTS: MultimapTableDefinition<&str, (([u8; 32], u32), (u64, Script))> =
     MultimapTableDefinition::new("txouts");
@@ -89,6 +88,32 @@ impl Key for TransactionWrapper {
         let tx1: TransactionWrapper = ciborium::from_reader(data1).unwrap();
         let tx2: TransactionWrapper = ciborium::from_reader(data2).unwrap();
         tx1.0.version.cmp(&tx2.0.version)
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BlockHashWrapper(BlockHash);
+
+impl Value for BlockHashWrapper {
+    type SelfType<'a> = BlockHashWrapper;
+    type AsBytes<'a> = [u8; 32];
+    fn fixed_width() -> Option<usize> {
+        Some(32usize)
+    }
+    fn as_bytes<'a, 'b: 'a>(value: &'a Self::SelfType<'b>) -> Self::AsBytes<'a>
+    where
+        Self: 'b,
+    {
+        value.0.to_byte_array()
+    }
+    fn from_bytes<'a>(data: &'a [u8]) -> Self::SelfType<'a>
+    where
+        Self: 'a,
+    {
+        BlockHashWrapper(BlockHash::from_slice(data).unwrap())
+    }
+    fn type_name() -> redb::TypeName {
+        TypeName::new("block_hash")
     }
 }
 
@@ -166,6 +191,7 @@ pub struct Store {
     network_table_name: String,
     keychain_table_name: String,
     last_revealed_table_name: String,
+    local_chain_table_name: String,
 }
 
 impl Store {
@@ -181,6 +207,10 @@ impl Store {
         TableDefinition::new(&self.last_revealed_table_name)
     }
 
+    pub fn get_local_chain_table_defn(&self) -> TableDefinition<u32, BlockHashWrapper> {
+        TableDefinition::new(&self.local_chain_table_name)
+    }
+
     pub fn load_or_create<P>(file_path: P, wallet_name: String) -> Result<Self, BdkRedbError>
     where
         P: AsRef<Path>,
@@ -192,12 +222,15 @@ impl Store {
         keychain_table_name.push_str("_keychain");
         let mut last_revealed_table_name = wallet_name.clone();
         last_revealed_table_name.push_str("_last_revealed");
+        let mut local_chain_table_name = wallet_name.clone();
+        local_chain_table_name.push_str("_local_chain");
         Ok(Store {
             db,
             wallet_name,
             network_table_name,
             keychain_table_name,
             last_revealed_table_name,
+            local_chain_table_name,
         })
     }
 
@@ -248,13 +281,13 @@ impl Store {
         db_tx: &WriteTransaction,
         changeset: &local_chain::ChangeSet,
     ) -> Result<(), BdkRedbError> {
-        let mut table = db_tx.open_table(LOCALCHAIN).map_err(redb::Error::from)?;
+        let mut table = db_tx
+            .open_table(self.get_local_chain_table_defn())
+            .map_err(redb::Error::from)?;
         for (ht, hash) in &changeset.blocks {
             match hash {
-                Some(hash) => table
-                    .insert((&*self.wallet_name, *ht), hash.as_ref())
-                    .unwrap(),
-                None => table.remove((&*self.wallet_name, *ht)).unwrap(),
+                Some(hash) => table.insert(*ht, BlockHashWrapper(*hash)).unwrap(),
+                None => table.remove(*ht).unwrap(),
             };
         }
         Ok(())
@@ -375,6 +408,7 @@ impl Store {
         let _ = db_tx
             .open_table(self.get_last_revealed_table_defn())
             .unwrap();
+        let _ = db_tx.open_table(self.get_local_chain_table_defn()).unwrap();
 
         db_tx.commit().map_err(redb::Error::from)?;
         Ok(())
@@ -435,42 +469,18 @@ impl Store {
         &self,
         db_tx: &ReadTransaction,
         changeset: &mut local_chain::ChangeSet,
-        chain_height: Option<u32>,
     ) -> Result<(), BdkRedbError> {
         let table = db_tx
-            .open_table(LOCALCHAIN)
+            .open_table(self.get_local_chain_table_defn())
             .map_err(redb::Error::from)
             .unwrap();
 
-        match chain_height {
-            Some(chain_height) => {
-                for pos in 0..=chain_height {
-                    let hash = table
-                        .get((&*self.wallet_name, pos))
-                        .unwrap()
-                        .unwrap()
-                        .value();
-                    changeset
-                        .blocks
-                        .insert(pos, Some(bitcoin::BlockHash::from_byte_array(hash)));
-                }
-            }
-            None => {
-                // iterate over all entries in the table 😱 (increased loading times!)
-                table
-                    .iter()
-                    .unwrap()
-                    .filter(|entry| *entry.as_ref().unwrap().0.value().0 == *self.wallet_name)
-                    .for_each(|entry| {
-                        changeset.blocks.insert(
-                            entry.as_ref().unwrap().0.value().1,
-                            Some(bitcoin::BlockHash::from_byte_array(
-                                entry.as_ref().unwrap().1.value(),
-                            )),
-                        );
-                    });
-            }
-        }
+        table.iter().unwrap().for_each(|entry| {
+            changeset.blocks.insert(
+                entry.as_ref().unwrap().0.value(),
+                Some(entry.as_ref().unwrap().1.value().0),
+            );
+        });
         Ok(())
     }
 
@@ -564,7 +574,7 @@ impl Store {
             &mut changeset.descriptor,
             &mut changeset.change_descriptor,
         )?;
-        self.read_local_chain(&db_tx, &mut changeset.local_chain, None)?;
+        self.read_local_chain(&db_tx, &mut changeset.local_chain)?;
         self.read_tx_graph(&db_tx, &mut changeset.tx_graph)?;
         self.read_last_revealed(&db_tx, &mut changeset.indexer)?;
 
@@ -698,9 +708,7 @@ mod test {
         db_tx.commit().unwrap();
         let db_tx = store.db.begin_read().unwrap();
         let mut changeset = local_chain::ChangeSet::default();
-        store
-            .read_local_chain(&db_tx, &mut changeset, None)
-            .unwrap();
+        store.read_local_chain(&db_tx, &mut changeset).unwrap();
         assert_eq!(local_chain_changeset, changeset);
 
         let mut blocks: BTreeMap<u32, Option<BlockHash>> = BTreeMap::new();
@@ -715,7 +723,7 @@ mod test {
         let db_tx = store.db.begin_read().unwrap();
         let mut changeset = ChangeSet::default();
         store
-            .read_local_chain(&db_tx, &mut changeset.local_chain, None)
+            .read_local_chain(&db_tx, &mut changeset.local_chain)
             .unwrap();
 
         let mut blocks: BTreeMap<u32, Option<BlockHash>> = BTreeMap::new();
