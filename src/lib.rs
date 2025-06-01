@@ -19,7 +19,7 @@ use std::{path::Path, str::FromStr};
 const TXGRAPH: TableDefinition<&str, TxGraphChangeSetWrapper> = TableDefinition::new("tx_graph");
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ScriptWrapper(ScriptBuf);
+struct ScriptWrapper(ScriptBuf);
 impl Value for ScriptWrapper {
     type SelfType<'a> = ScriptWrapper;
     type AsBytes<'a> = Vec<u8>;
@@ -52,7 +52,7 @@ impl Key for ScriptWrapper {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct TransactionWrapper(bitcoin::Transaction);
+struct TransactionWrapper(bitcoin::Transaction);
 impl Value for TransactionWrapper {
     type SelfType<'a> = TransactionWrapper;
     type AsBytes<'a> = Vec<u8>;
@@ -87,7 +87,7 @@ impl Key for TransactionWrapper {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct BlockHashWrapper(BlockHash);
+struct BlockHashWrapper(BlockHash);
 
 impl Value for BlockHashWrapper {
     type SelfType<'a> = BlockHashWrapper;
@@ -141,7 +141,7 @@ impl Value for TxGraphChangeSetWrapper {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct DIDWrapper(DescriptorId);
+struct DIDWrapper(DescriptorId);
 impl Value for DIDWrapper {
     type SelfType<'a> = DIDWrapper;
     type AsBytes<'a> = [u8; 32];
@@ -172,7 +172,7 @@ impl Key for DIDWrapper {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct TxidWrapper(Txid);
+struct TxidWrapper(Txid);
 
 impl Value for TxidWrapper {
     type SelfType<'a> = TxidWrapper;
@@ -204,7 +204,7 @@ impl Key for TxidWrapper {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct AmountWrapper(Amount);
+struct AmountWrapper(Amount);
 
 impl Value for AmountWrapper {
     type SelfType<'a> = AmountWrapper;
@@ -253,33 +253,33 @@ pub struct Store {
 }
 
 impl Store {
-    pub fn get_network_table_defn(&self) -> TableDefinition<&'static str, String> {
+    fn get_network_table_defn(&self) -> TableDefinition<&'static str, String> {
         TableDefinition::new(&self.network_table_name)
     }
 
-    pub fn get_keychains_table_defn(&self) -> MultimapTableDefinition<&'static str, String> {
+    fn get_keychains_table_defn(&self) -> MultimapTableDefinition<&'static str, String> {
         MultimapTableDefinition::new(&self.keychain_table_name)
     }
 
-    pub fn get_last_revealed_table_defn(&self) -> TableDefinition<DIDWrapper, u32> {
+    fn get_last_revealed_table_defn(&self) -> TableDefinition<DIDWrapper, u32> {
         TableDefinition::new(&self.last_revealed_table_name)
     }
 
-    pub fn get_local_chain_table_defn(&self) -> TableDefinition<u32, BlockHashWrapper> {
+    fn get_local_chain_table_defn(&self) -> TableDefinition<u32, BlockHashWrapper> {
         TableDefinition::new(&self.local_chain_table_name)
     }
 
-    pub fn get_txouts_table_defn(
+    fn get_txouts_table_defn(
         &self,
     ) -> TableDefinition<(TxidWrapper, u32), (AmountWrapper, ScriptWrapper)> {
         TableDefinition::new(&self.txouts_table_name)
     }
 
-    pub fn get_last_seen_defn(&self) -> TableDefinition<TxidWrapper, u64> {
+    fn get_last_seen_defn(&self) -> TableDefinition<TxidWrapper, u64> {
         TableDefinition::new(&self.last_seen_table_name)
     }
 
-    pub fn get_txs_table_defn(&self) -> TableDefinition<TxidWrapper, TransactionWrapper> {
+    fn get_txs_table_defn(&self) -> TableDefinition<TxidWrapper, TransactionWrapper> {
         TableDefinition::new(&self.txs_table_name)
     }
 
