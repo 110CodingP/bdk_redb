@@ -19,7 +19,6 @@ use std::{path::Path, str::FromStr};
 const TXGRAPH: TableDefinition<&str, TxGraphChangeSetWrapper> = TableDefinition::new("tx_graph");
 const TXS: MultimapTableDefinition<&str, ([u8; 32], TransactionWrapper)> =
     MultimapTableDefinition::new("txs");
-const LAST_SEEN: TableDefinition<(&str, [u8; 32]), u64> = TableDefinition::new("last_seen");
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ScriptWrapper(ScriptBuf);
@@ -251,6 +250,7 @@ pub struct Store {
     last_revealed_table_name: String,
     local_chain_table_name: String,
     txouts_table_name: String,
+    last_seen_table_name: String,
 }
 
 impl Store {
@@ -276,6 +276,10 @@ impl Store {
         TableDefinition::new(&self.txouts_table_name)
     }
 
+    pub fn get_last_seen_defn(&self) -> TableDefinition<TxidWrapper, u64> {
+        TableDefinition::new(&self.last_seen_table_name)
+    }
+
     pub fn load_or_create<P>(file_path: P, wallet_name: String) -> Result<Self, BdkRedbError>
     where
         P: AsRef<Path>,
@@ -291,6 +295,8 @@ impl Store {
         local_chain_table_name.push_str("_local_chain");
         let mut txouts_table_name = wallet_name.clone();
         txouts_table_name.push_str("_txouts");
+        let mut last_seen_table_name = wallet_name.clone();
+        last_seen_table_name.push_str("_last_seen");
         Ok(Store {
             db,
             wallet_name,
@@ -299,6 +305,7 @@ impl Store {
             last_revealed_table_name,
             local_chain_table_name,
             txouts_table_name,
+            last_seen_table_name,
         })
     }
 
@@ -366,11 +373,11 @@ impl Store {
         db_tx: &WriteTransaction,
         changeset: &tx_graph::ChangeSet<ConfirmationBlockTime>,
     ) -> Result<(), BdkRedbError> {
-        let mut table = db_tx.open_table(LAST_SEEN).map_err(redb::Error::from)?;
+        let mut table = db_tx
+            .open_table(self.get_last_seen_defn())
+            .map_err(redb::Error::from)?;
         for (txid, last_seen) in &changeset.last_seen {
-            table
-                .insert((&*self.wallet_name, txid.to_byte_array()), *last_seen)
-                .unwrap();
+            table.insert(TxidWrapper(*txid), *last_seen).unwrap();
         }
         Ok(())
     }
@@ -478,6 +485,7 @@ impl Store {
             .unwrap();
         let _ = db_tx.open_table(self.get_local_chain_table_defn()).unwrap();
         let _ = db_tx.open_table(self.get_txouts_table_defn()).unwrap();
+        let _ = db_tx.open_table(self.get_last_seen_defn()).unwrap();
 
         db_tx.commit().map_err(redb::Error::from)?;
         Ok(())
@@ -558,17 +566,15 @@ impl Store {
         db_tx: &ReadTransaction,
         changeset: &mut tx_graph::ChangeSet<ConfirmationBlockTime>,
     ) -> Result<(), BdkRedbError> {
-        let table = db_tx.open_table(LAST_SEEN).map_err(redb::Error::from)?;
-        table
-            .iter()
-            .unwrap()
-            .filter(|entry| entry.as_ref().unwrap().0.value().0 == &*self.wallet_name)
-            .for_each(|entry| {
-                changeset.last_seen.insert(
-                    bitcoin::Txid::from_byte_array(entry.as_ref().unwrap().0.value().1),
-                    entry.as_ref().unwrap().1.value(),
-                );
-            });
+        let table = db_tx
+            .open_table(self.get_last_seen_defn())
+            .map_err(redb::Error::from)?;
+        table.iter().unwrap().for_each(|entry| {
+            changeset.last_seen.insert(
+                entry.as_ref().unwrap().0.value().0,
+                entry.as_ref().unwrap().1.value(),
+            );
+        });
         Ok(())
     }
 
