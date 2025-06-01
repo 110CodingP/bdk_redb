@@ -17,16 +17,14 @@ use std::sync::Arc;
 use std::{path::Path, str::FromStr};
 
 const TXGRAPH: TableDefinition<&str, TxGraphChangeSetWrapper> = TableDefinition::new("tx_graph");
-const TXOUTS: MultimapTableDefinition<&str, (([u8; 32], u32), (u64, Script))> =
-    MultimapTableDefinition::new("txouts");
 const TXS: MultimapTableDefinition<&str, ([u8; 32], TransactionWrapper)> =
     MultimapTableDefinition::new("txs");
 const LAST_SEEN: TableDefinition<(&str, [u8; 32]), u64> = TableDefinition::new("last_seen");
 
 #[derive(Debug, Serialize, Deserialize)]
-struct Script(Vec<u8>);
-impl Value for Script {
-    type SelfType<'a> = Script;
+pub struct ScriptWrapper(ScriptBuf);
+impl Value for ScriptWrapper {
+    type SelfType<'a> = ScriptWrapper;
     type AsBytes<'a> = Vec<u8>;
     fn fixed_width() -> Option<usize> {
         None
@@ -35,20 +33,20 @@ impl Value for Script {
     where
         Self: 'b,
     {
-        value.0.clone()
+        value.0.clone().into_bytes()
     }
     fn from_bytes<'a>(data: &'a [u8]) -> Self::SelfType<'a>
     where
         Self: 'a,
     {
-        Script(data.to_vec())
+        ScriptWrapper(ScriptBuf::from_bytes(data.to_vec()))
     }
     fn type_name() -> redb::TypeName {
         TypeName::new("tx_graph")
     }
 }
 
-impl Key for Script {
+impl Key for ScriptWrapper {
     fn compare(data1: &[u8], data2: &[u8]) -> std::cmp::Ordering {
         let vec1 = data1.to_vec();
         let vec2 = data2.to_vec();
@@ -176,6 +174,66 @@ impl Key for DIDWrapper {
     }
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TxidWrapper(Txid);
+
+impl Value for TxidWrapper {
+    type SelfType<'a> = TxidWrapper;
+    type AsBytes<'a> = [u8; 32];
+    fn fixed_width() -> Option<usize> {
+        Some(32usize)
+    }
+    fn as_bytes<'a, 'b: 'a>(value: &'a Self::SelfType<'b>) -> Self::AsBytes<'a>
+    where
+        Self: 'b,
+    {
+        value.0.to_byte_array()
+    }
+    fn from_bytes<'a>(data: &'a [u8]) -> Self::SelfType<'a>
+    where
+        Self: 'a,
+    {
+        TxidWrapper(Txid::from_slice(data).unwrap())
+    }
+    fn type_name() -> redb::TypeName {
+        TypeName::new("txid")
+    }
+}
+
+impl Key for TxidWrapper {
+    fn compare(data1: &[u8], data2: &[u8]) -> std::cmp::Ordering {
+        data1.cmp(data2)
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AmountWrapper(Amount);
+
+impl Value for AmountWrapper {
+    type SelfType<'a> = AmountWrapper;
+    type AsBytes<'a> = [u8; 8];
+    fn fixed_width() -> Option<usize> {
+        Some(32usize)
+    }
+    fn as_bytes<'a, 'b: 'a>(value: &'a Self::SelfType<'b>) -> Self::AsBytes<'a>
+    where
+        Self: 'b,
+    {
+        value.0.to_sat().to_le_bytes()
+    }
+    fn from_bytes<'a>(data: &'a [u8]) -> Self::SelfType<'a>
+    where
+        Self: 'a,
+    {
+        AmountWrapper(Amount::from_sat(u64::from_le_bytes(
+            data.try_into().unwrap(),
+        )))
+    }
+    fn type_name() -> redb::TypeName {
+        TypeName::new("txid")
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum BdkRedbError {
     #[error(transparent)]
@@ -192,6 +250,7 @@ pub struct Store {
     keychain_table_name: String,
     last_revealed_table_name: String,
     local_chain_table_name: String,
+    txouts_table_name: String,
 }
 
 impl Store {
@@ -211,6 +270,12 @@ impl Store {
         TableDefinition::new(&self.local_chain_table_name)
     }
 
+    pub fn get_txouts_table_defn(
+        &self,
+    ) -> TableDefinition<(TxidWrapper, u32), (AmountWrapper, ScriptWrapper)> {
+        TableDefinition::new(&self.txouts_table_name)
+    }
+
     pub fn load_or_create<P>(file_path: P, wallet_name: String) -> Result<Self, BdkRedbError>
     where
         P: AsRef<Path>,
@@ -224,6 +289,8 @@ impl Store {
         last_revealed_table_name.push_str("_last_revealed");
         let mut local_chain_table_name = wallet_name.clone();
         local_chain_table_name.push_str("_local_chain");
+        let mut txouts_table_name = wallet_name.clone();
+        txouts_table_name.push_str("_txouts");
         Ok(Store {
             db,
             wallet_name,
@@ -231,6 +298,7 @@ impl Store {
             keychain_table_name,
             last_revealed_table_name,
             local_chain_table_name,
+            txouts_table_name,
         })
     }
 
@@ -313,15 +381,15 @@ impl Store {
         changeset: &tx_graph::ChangeSet<ConfirmationBlockTime>,
     ) -> Result<(), BdkRedbError> {
         let mut table = db_tx
-            .open_multimap_table(TXOUTS)
+            .open_table(self.get_txouts_table_defn())
             .map_err(redb::Error::from)?;
         for (outpoint, txout) in &changeset.txouts {
             table
                 .insert(
-                    &*self.wallet_name,
+                    (TxidWrapper(outpoint.txid), outpoint.vout),
                     (
-                        (outpoint.txid.to_byte_array(), outpoint.vout),
-                        (txout.value.to_sat(), Script(txout.script_pubkey.to_bytes())),
+                        AmountWrapper(txout.value),
+                        ScriptWrapper(txout.script_pubkey.clone()),
                     ),
                 )
                 .unwrap();
@@ -409,6 +477,7 @@ impl Store {
             .open_table(self.get_last_revealed_table_defn())
             .unwrap();
         let _ = db_tx.open_table(self.get_local_chain_table_defn()).unwrap();
+        let _ = db_tx.open_table(self.get_txouts_table_defn()).unwrap();
 
         db_tx.commit().map_err(redb::Error::from)?;
         Ok(())
@@ -508,16 +577,16 @@ impl Store {
         db_tx: &ReadTransaction,
         changeset: &mut tx_graph::ChangeSet<ConfirmationBlockTime>,
     ) -> Result<(), BdkRedbError> {
-        let table = db_tx.open_multimap_table(TXOUTS).unwrap();
-        table.get(&*self.wallet_name).unwrap().for_each(|entry| {
+        let table = db_tx.open_table(self.get_txouts_table_defn()).unwrap();
+        table.iter().unwrap().for_each(|entry| {
             changeset.txouts.insert(
                 OutPoint {
-                    txid: Txid::from_byte_array(entry.as_ref().unwrap().value().0.0),
-                    vout: entry.as_ref().unwrap().value().0.1,
+                    txid: entry.as_ref().unwrap().0.value().0.0,
+                    vout: entry.as_ref().unwrap().0.value().1,
                 },
                 TxOut {
-                    value: Amount::from_sat(entry.as_ref().unwrap().value().1.0),
-                    script_pubkey: ScriptBuf::from_bytes(entry.as_ref().unwrap().value().1.1.0),
+                    value: entry.as_ref().unwrap().1.value().0.0,
+                    script_pubkey: entry.as_ref().unwrap().1.value().1.0,
                 },
             );
         });
