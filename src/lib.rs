@@ -18,7 +18,6 @@ use std::{path::Path, str::FromStr};
 
 const LOCALCHAIN: TableDefinition<(&str, u32), [u8; 32]> = TableDefinition::new("local_chain");
 const TXGRAPH: TableDefinition<&str, TxGraphChangeSetWrapper> = TableDefinition::new("tx_graph");
-const LAST_REVEALED: TableDefinition<(&str, [u8; 32]), u32> = TableDefinition::new("last_revealed");
 const TXOUTS: MultimapTableDefinition<&str, (([u8; 32], u32), (u64, Script))> =
     MultimapTableDefinition::new("txouts");
 const TXS: MultimapTableDefinition<&str, ([u8; 32], TransactionWrapper)> =
@@ -121,6 +120,37 @@ impl Value for TxGraphChangeSetWrapper {
     }
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DIDWrapper(DescriptorId);
+impl Value for DIDWrapper {
+    type SelfType<'a> = DIDWrapper;
+    type AsBytes<'a> = [u8; 32];
+    fn fixed_width() -> Option<usize> {
+        Some(32usize)
+    }
+    fn as_bytes<'a, 'b: 'a>(value: &'a Self::SelfType<'b>) -> Self::AsBytes<'a>
+    where
+        Self: 'b,
+    {
+        value.0.to_byte_array()
+    }
+    fn from_bytes<'a>(data: &'a [u8]) -> Self::SelfType<'a>
+    where
+        Self: 'a,
+    {
+        DIDWrapper(DescriptorId::from_slice(data).unwrap())
+    }
+    fn type_name() -> redb::TypeName {
+        TypeName::new("descriptor_id")
+    }
+}
+
+impl Key for DIDWrapper {
+    fn compare(data1: &[u8], data2: &[u8]) -> std::cmp::Ordering {
+        data1.cmp(data2)
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum BdkRedbError {
     #[error(transparent)]
@@ -135,6 +165,7 @@ pub struct Store {
     wallet_name: String,
     network_table_name: String,
     keychain_table_name: String,
+    last_revealed_table_name: String,
 }
 
 impl Store {
@@ -146,6 +177,10 @@ impl Store {
         MultimapTableDefinition::new(&self.keychain_table_name)
     }
 
+    pub fn get_last_revealed_table_defn(&self) -> TableDefinition<DIDWrapper, u32> {
+        TableDefinition::new(&self.last_revealed_table_name)
+    }
+
     pub fn load_or_create<P>(file_path: P, wallet_name: String) -> Result<Self, BdkRedbError>
     where
         P: AsRef<Path>,
@@ -155,11 +190,14 @@ impl Store {
         network_table_name.push_str("_network");
         let mut keychain_table_name = wallet_name.clone();
         keychain_table_name.push_str("_keychain");
+        let mut last_revealed_table_name = wallet_name.clone();
+        last_revealed_table_name.push_str("_last_revealed");
         Ok(Store {
             db,
             wallet_name,
             network_table_name,
             keychain_table_name,
+            last_revealed_table_name,
         })
     }
 
@@ -305,11 +343,11 @@ impl Store {
         db_tx: &WriteTransaction,
         changeset: &keychain_txout::ChangeSet,
     ) -> Result<(), BdkRedbError> {
-        let mut table = db_tx.open_table(LAST_REVEALED).map_err(redb::Error::from)?;
+        let mut table = db_tx
+            .open_table(self.get_last_revealed_table_defn())
+            .map_err(redb::Error::from)?;
         for (desc, idx) in &changeset.last_revealed {
-            table
-                .insert((&*self.wallet_name, desc.to_byte_array()), idx)
-                .unwrap();
+            table.insert(DIDWrapper(*desc), idx).unwrap();
         }
         Ok(())
     }
@@ -330,8 +368,13 @@ impl Store {
     pub fn create_tables(&mut self) -> Result<(), BdkRedbError> {
         let db_tx = self.db.begin_write().map_err(redb::Error::from)?;
 
-        let _ = db_tx.open_table(self.get_network_table_defn());
-        let _ = db_tx.open_multimap_table(self.get_keychains_table_defn());
+        let _ = db_tx.open_table(self.get_network_table_defn()).unwrap();
+        let _ = db_tx
+            .open_multimap_table(self.get_keychains_table_defn())
+            .unwrap();
+        let _ = db_tx
+            .open_table(self.get_last_revealed_table_defn())
+            .unwrap();
 
         db_tx.commit().map_err(redb::Error::from)?;
         Ok(())
@@ -487,35 +530,16 @@ impl Store {
         &self,
         db_tx: &ReadTransaction,
         changeset: &mut keychain_txout::ChangeSet,
-        desc_ids: Option<Vec<[u8; 32]>>,
     ) -> Result<(), BdkRedbError> {
-        let table = db_tx.open_table(LAST_REVEALED).map_err(redb::Error::from)?;
-        match desc_ids {
-            Some(desc_ids) => {
-                for id in desc_ids {
-                    changeset.last_revealed.insert(
-                        DescriptorId::from_byte_array(id),
-                        table
-                            .get((&*self.wallet_name, id))
-                            .unwrap()
-                            .unwrap()
-                            .value(),
-                    );
-                }
-            }
-            None => {
-                table
-                    .iter()
-                    .unwrap()
-                    .filter(|entry| entry.as_ref().unwrap().0.value().0 == &*self.wallet_name)
-                    .for_each(|entry| {
-                        changeset.last_revealed.insert(
-                            DescriptorId::from_byte_array(entry.as_ref().unwrap().0.value().1),
-                            entry.as_ref().unwrap().1.value(),
-                        );
-                    });
-            }
-        }
+        let table = db_tx
+            .open_table(self.get_last_revealed_table_defn())
+            .map_err(redb::Error::from)?;
+        table.iter().unwrap().for_each(|entry| {
+            changeset.last_revealed.insert(
+                entry.as_ref().unwrap().0.value().0,
+                entry.as_ref().unwrap().1.value(),
+            );
+        });
         Ok(())
     }
 
@@ -542,7 +566,7 @@ impl Store {
         )?;
         self.read_local_chain(&db_tx, &mut changeset.local_chain, None)?;
         self.read_tx_graph(&db_tx, &mut changeset.tx_graph)?;
-        self.read_last_revealed(&db_tx, &mut changeset.indexer, None)?;
+        self.read_last_revealed(&db_tx, &mut changeset.indexer)?;
 
         Ok(())
     }
@@ -940,9 +964,7 @@ mod test {
 
         let mut changeset = keychain_txout::ChangeSet::default();
         let db_tx = store.db.begin_read().unwrap();
-        store
-            .read_last_revealed(&db_tx, &mut changeset, None)
-            .unwrap();
+        store.read_last_revealed(&db_tx, &mut changeset).unwrap();
 
         assert_eq!(changeset, keychain_txout_changeset);
     }
