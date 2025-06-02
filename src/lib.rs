@@ -3,7 +3,7 @@ mod error;
 use bdk_wallet::bitcoin::{self, Amount, Network, OutPoint, Txid, hashes::Hash};
 use bdk_wallet::bitcoin::{BlockHash, ScriptBuf, TxOut};
 use bdk_wallet::chain::{
-    ConfirmationBlockTime, DescriptorId, keychain_txout, local_chain, tx_graph,
+    BlockId, ConfirmationBlockTime, DescriptorId, keychain_txout, local_chain, tx_graph,
 };
 use bdk_wallet::descriptor::{Descriptor, DescriptorPublicKey};
 use bdk_wallet::{ChangeSet, chain::Merge};
@@ -140,7 +140,47 @@ impl Value for TxGraphChangeSetWrapper {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+struct BlockIdWrapper(BlockId);
+
+impl Value for BlockIdWrapper {
+    type SelfType<'a> = BlockIdWrapper;
+    type AsBytes<'a> = [u8; 36];
+    fn fixed_width() -> Option<usize> {
+        Some(36usize)
+    }
+    fn as_bytes<'a, 'b: 'a>(value: &'a Self::SelfType<'b>) -> Self::AsBytes<'a>
+    where
+        Self: 'b,
+    {
+        let mut bytes: [u8; 36] = [0; 36];
+        bytes[0..4].copy_from_slice(&value.0.height.to_le_bytes());
+        bytes[4..].copy_from_slice(&value.0.hash.to_byte_array());
+        bytes
+    }
+    fn from_bytes<'a>(data: &'a [u8]) -> Self::SelfType<'a>
+    where
+        Self: 'a,
+    {
+        let bytes: [u8; 36] = data.try_into().unwrap();
+        let block_id = BlockId {
+            height: u32::from_le_bytes(bytes[0..4].try_into().unwrap()),
+            hash: BlockHash::from_slice(&bytes[4..]).unwrap(),
+        };
+        BlockIdWrapper(block_id)
+    }
+    fn type_name() -> redb::TypeName {
+        TypeName::new("block_id")
+    }
+}
+
+impl Key for BlockIdWrapper {
+    fn compare(data1: &[u8], data2: &[u8]) -> std::cmp::Ordering {
+        data1.cmp(data2)
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 struct DIDWrapper(DescriptorId);
 impl Value for DIDWrapper {
     type SelfType<'a> = DIDWrapper;
@@ -171,7 +211,7 @@ impl Key for DIDWrapper {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 struct TxidWrapper(Txid);
 
 impl Value for TxidWrapper {
@@ -250,6 +290,7 @@ pub struct Store {
     txouts_table_name: String,
     last_seen_table_name: String,
     txs_table_name: String,
+    anchors_table_name: String,
 }
 
 impl Store {
@@ -283,6 +324,10 @@ impl Store {
         TableDefinition::new(&self.txs_table_name)
     }
 
+    fn get_anchors_table_defn(&self) -> TableDefinition<(TxidWrapper, BlockIdWrapper), u64> {
+        TableDefinition::new(&self.anchors_table_name)
+    }
+
     pub fn load_or_create<P>(file_path: P, wallet_name: String) -> Result<Self, BdkRedbError>
     where
         P: AsRef<Path>,
@@ -302,6 +347,8 @@ impl Store {
         last_seen_table_name.push_str("_last_seen");
         let mut txs_table_name = wallet_name.clone();
         txs_table_name.push_str("_txs");
+        let mut anchors_table_name = wallet_name.clone();
+        anchors_table_name.push_str("_anchors");
         Ok(Store {
             db,
             wallet_name,
@@ -312,6 +359,7 @@ impl Store {
             txouts_table_name,
             last_seen_table_name,
             txs_table_name,
+            anchors_table_name,
         })
     }
 
@@ -429,6 +477,31 @@ impl Store {
         Ok(())
     }
 
+    pub fn persist_anchors(
+        &self,
+        db_tx: &WriteTransaction,
+        changeset: &tx_graph::ChangeSet<ConfirmationBlockTime>,
+        read_txn: &ReadTransaction,
+    ) -> Result<(), BdkRedbError> {
+        let mut table = db_tx
+            .open_table(self.get_anchors_table_defn())
+            .map_err(redb::Error::from)?;
+        let txs_table = read_txn
+            .open_table(self.get_txs_table_defn())
+            .map_err(redb::Error::from)?;
+        for (anchor, txid) in &changeset.anchors {
+            if txs_table.get(TxidWrapper(*txid)).unwrap().is_some() {
+                table
+                    .insert(
+                        (TxidWrapper(*txid), BlockIdWrapper(anchor.block_id)),
+                        anchor.confirmation_time,
+                    )
+                    .unwrap();
+            }
+        }
+        Ok(())
+    }
+
     pub fn persist_tx_graph(
         &self,
         db_tx: &WriteTransaction,
@@ -492,6 +565,7 @@ impl Store {
         let _ = db_tx.open_table(self.get_txouts_table_defn()).unwrap();
         let _ = db_tx.open_table(self.get_last_seen_defn()).unwrap();
         let _ = db_tx.open_table(self.get_txs_table_defn()).unwrap();
+        let _ = db_tx.open_table(self.get_anchors_table_defn()).unwrap();
 
         db_tx.commit().map_err(redb::Error::from)?;
         Ok(())
@@ -601,6 +675,26 @@ impl Store {
                     script_pubkey: entry.as_ref().unwrap().1.value().1.0,
                 },
             );
+        });
+        Ok(())
+    }
+
+    pub fn read_anchors(
+        &self,
+        db_tx: &ReadTransaction,
+        changeset: &mut tx_graph::ChangeSet<ConfirmationBlockTime>,
+    ) -> Result<(), BdkRedbError> {
+        let table = db_tx
+            .open_table(self.get_anchors_table_defn())
+            .map_err(redb::Error::from)?;
+        table.iter().unwrap().for_each(|entry| {
+            changeset.anchors.insert((
+                ConfirmationBlockTime {
+                    block_id: entry.as_ref().unwrap().0.value().1.0,
+                    confirmation_time: entry.as_ref().unwrap().1.value(),
+                },
+                entry.as_ref().unwrap().0.value().0.0,
+            ));
         });
         Ok(())
     }
@@ -934,6 +1028,106 @@ mod test {
         let mut changeset = tx_graph::ChangeSet::<ConfirmationBlockTime>::default();
         store.read_txs(&db_tx, &mut changeset).unwrap();
         assert_eq!(changeset.txouts, tx_graph_changeset1.txouts);
+    }
+
+    #[test]
+    fn test_persist_anchors() {
+        let tmpfile = NamedTempFile::new().unwrap();
+        let store = create_test_store(tmpfile, "wallet_1");
+
+        let tx1 = Transaction {
+            version: transaction::Version::ONE,
+            lock_time: absolute::LockTime::ZERO,
+            input: vec![TxIn {
+                previous_output: OutPoint::null(),
+                ..Default::default()
+            }],
+            output: vec![TxOut {
+                value: Amount::from_sat(30_000),
+                script_pubkey: ScriptBuf::new(),
+            }],
+        };
+
+        let tx2 = Transaction {
+            version: transaction::Version::TWO,
+            lock_time: absolute::LockTime::ZERO,
+            input: vec![TxIn {
+                previous_output: OutPoint {
+                    txid: tx1.compute_txid(),
+                    vout: 0,
+                },
+                ..Default::default()
+            }],
+            output: vec![TxOut {
+                value: Amount::from_sat(20_000),
+                script_pubkey: ScriptBuf::new(),
+            }],
+        };
+
+        let anchor1 = ConfirmationBlockTime {
+            block_id: BlockId {
+                height: 23,
+                hash: BlockHash::from_byte_array([0; 32]),
+            },
+            confirmation_time: 1756838400,
+        };
+
+        let anchor2 = ConfirmationBlockTime {
+            block_id: BlockId {
+                height: 25,
+                hash: BlockHash::from_byte_array([0; 32]),
+            },
+            confirmation_time: 1756839600,
+        };
+
+        let tx_graph_changeset1 = tx_graph::ChangeSet::<ConfirmationBlockTime> {
+            txs: [Arc::new(tx1.clone()), Arc::new(tx2.clone())].into(),
+            txouts: [].into(),
+            anchors: [(anchor1, tx1.compute_txid()), (anchor2, tx2.compute_txid())].into(),
+            last_seen: [].into(),
+        };
+
+        let db_tx = store.db.begin_write().unwrap();
+        store.persist_txs(&db_tx, &tx_graph_changeset1).unwrap();
+        db_tx.commit().unwrap();
+
+        let db_tx = store.db.begin_write().unwrap();
+        let read_txn = store.db.begin_read().unwrap();
+        store.persist_txs(&db_tx, &tx_graph_changeset1).unwrap();
+        store
+            .persist_anchors(&db_tx, &tx_graph_changeset1, &read_txn)
+            .unwrap();
+        read_txn.close().unwrap();
+        db_tx.commit().unwrap();
+
+        let db_tx = store.db.begin_read().unwrap();
+        let mut changeset = tx_graph::ChangeSet::<ConfirmationBlockTime>::default();
+        store.read_anchors(&db_tx, &mut changeset).unwrap();
+        assert_eq!(changeset.anchors, tx_graph_changeset1.anchors);
+
+        let tx_graph_changeset2 = tx_graph::ChangeSet::<ConfirmationBlockTime> {
+            txs: [].into(),
+            txouts: [].into(),
+            anchors: [(anchor1, Txid::from_byte_array([3; 32]))].into(),
+            last_seen: [].into(),
+        };
+
+        let db_tx = store.db.begin_write().unwrap();
+        store.persist_txs(&db_tx, &tx_graph_changeset2).unwrap();
+        db_tx.commit().unwrap();
+
+        let db_tx = store.db.begin_write().unwrap();
+        let read_txn = store.db.begin_read().unwrap();
+        store
+            .persist_anchors(&db_tx, &tx_graph_changeset2, &read_txn)
+            .unwrap();
+        read_txn.close().unwrap();
+        db_tx.commit().unwrap();
+
+        let db_tx = store.db.begin_read().unwrap();
+        let mut changeset = tx_graph::ChangeSet::<ConfirmationBlockTime>::default();
+        store.read_anchors(&db_tx, &mut changeset).unwrap();
+        assert_eq!(changeset.anchors, tx_graph_changeset1.anchors);
     }
 
     fn test_tx_graph_persistence(store: &Store) {
