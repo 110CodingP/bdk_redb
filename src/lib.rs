@@ -1027,7 +1027,7 @@ mod test {
         let db_tx = store.db.begin_read().unwrap();
         let mut changeset = tx_graph::ChangeSet::<ConfirmationBlockTime>::default();
         store.read_txs(&db_tx, &mut changeset).unwrap();
-        assert_eq!(changeset.txouts, tx_graph_changeset1.txouts);
+        assert_eq!(changeset.txs, tx_graph_changeset1.txs);
     }
 
     #[test]
