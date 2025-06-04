@@ -17,6 +17,7 @@ use std::sync::Arc;
 use std::{path::Path, str::FromStr};
 
 const TXGRAPH: TableDefinition<&str, TxGraphChangeSetWrapper> = TableDefinition::new("tx_graph");
+const NETWORK: TableDefinition<&str, String> = TableDefinition::new("network");
 
 #[derive(Debug, Serialize, Deserialize)]
 struct ScriptWrapper(ScriptBuf);
@@ -283,7 +284,7 @@ pub enum BdkRedbError {
 pub struct Store {
     db: Database,
     wallet_name: String,
-    network_table_name: String,
+
     keychain_table_name: String,
     last_revealed_table_name: String,
     local_chain_table_name: String,
@@ -294,10 +295,6 @@ pub struct Store {
 }
 
 impl Store {
-    fn network_table_defn(&self) -> TableDefinition<&'static str, String> {
-        TableDefinition::new(&self.network_table_name)
-    }
-
     fn keychains_table_defn(&self) -> MultimapTableDefinition<&'static str, String> {
         MultimapTableDefinition::new(&self.keychain_table_name)
     }
@@ -352,7 +349,6 @@ impl Store {
         Ok(Store {
             db,
             wallet_name,
-            network_table_name,
             keychain_table_name,
             last_revealed_table_name,
             local_chain_table_name,
@@ -368,9 +364,7 @@ impl Store {
         write_tx: &WriteTransaction,
         network: &Option<bitcoin::Network>,
     ) -> Result<(), BdkRedbError> {
-        let mut table = write_tx
-            .open_table(self.network_table_defn())
-            .map_err(redb::Error::from)?;
+        let mut table = write_tx.open_table(NETWORK).map_err(redb::Error::from)?;
 
         // assuming network will be persisted once and only once
         if let Some(network) = network {
@@ -558,7 +552,7 @@ impl Store {
     pub fn create_tables(&mut self) -> Result<(), BdkRedbError> {
         let write_tx = self.db.begin_write().map_err(redb::Error::from)?;
 
-        let _ = write_tx.open_table(self.network_table_defn()).unwrap();
+        let _ = write_tx.open_table(NETWORK).unwrap();
         let _ = write_tx
             .open_multimap_table(self.keychains_table_defn())
             .unwrap();
@@ -580,9 +574,7 @@ impl Store {
         read_tx: &ReadTransaction,
         network: &mut Option<bitcoin::Network>,
     ) -> Result<(), BdkRedbError> {
-        let table = read_tx
-            .open_table(self.network_table_defn())
-            .map_err(redb::Error::from)?;
+        let table = read_tx.open_table(NETWORK).map_err(redb::Error::from)?;
         *network = match table.get(&*self.wallet_name).map_err(redb::Error::from)? {
             Some(network) => Some(Network::from_str(&network.value()).expect("parse network")),
             None => {
