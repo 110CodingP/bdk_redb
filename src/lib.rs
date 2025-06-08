@@ -4,7 +4,7 @@ use bdk_wallet::ChangeSet;
 use bdk_wallet::bitcoin::{self, Amount, Network, OutPoint, Txid, hashes::Hash};
 use bdk_wallet::bitcoin::{BlockHash, ScriptBuf, Transaction, TxOut};
 use bdk_wallet::chain::{
-    Anchor, BlockId, ConfirmationBlockTime, DescriptorId, keychain_txout, local_chain, tx_graph,
+    Anchor, BlockId, ConfirmationBlockTime, DescriptorId, local_chain, tx_graph,
 };
 use bdk_wallet::descriptor::{Descriptor, DescriptorPublicKey};
 use error::MissingError;
@@ -585,12 +585,12 @@ impl Store {
     pub fn persist_last_revealed(
         &self,
         write_tx: &WriteTransaction,
-        changeset: &keychain_txout::ChangeSet,
+        last_revealed: &BTreeMap<DescriptorId, u32>,
     ) -> Result<(), BdkRedbError> {
         let mut table = write_tx
             .open_table(self.last_revealed_table_defn())
             .map_err(redb::Error::from)?;
-        for (desc, idx) in &changeset.last_revealed {
+        for (desc, idx) in last_revealed {
             table.insert(DIDWrapper(*desc), idx).unwrap();
         }
         Ok(())
@@ -599,12 +599,12 @@ impl Store {
     pub fn persist_spks(
         &self,
         write_tx: &WriteTransaction,
-        changeset: &keychain_txout::ChangeSet,
+        spk_cache: &BTreeMap<DescriptorId, BTreeMap<u32, ScriptBuf>>,
     ) -> Result<(), BdkRedbError> {
         let mut table = write_tx
             .open_table(self.spk_table_defn())
             .map_err(redb::Error::from)?;
-        for (desc, map) in &changeset.spk_cache {
+        for (desc, map) in spk_cache {
             map.iter().for_each(|entry| {
                 table
                     .insert(
@@ -631,8 +631,8 @@ impl Store {
         }
         self.persist_keychains(&write_tx, &desc_changeset)?;
         self.persist_local_chain(&write_tx, &changeset.local_chain)?;
-        self.persist_last_revealed(&write_tx, &changeset.indexer)?;
-        self.persist_spks(&write_tx, &changeset.indexer)?;
+        self.persist_last_revealed(&write_tx, &changeset.indexer.last_revealed)?;
+        self.persist_spks(&write_tx, &changeset.indexer.spk_cache)?;
         write_tx.commit().unwrap();
         self.persist_tx_graph::<ConfirmationBlockTime>(&changeset.tx_graph)?;
         Ok(())
@@ -791,13 +791,13 @@ impl Store {
     pub fn read_last_revealed(
         &self,
         read_tx: &ReadTransaction,
-        changeset: &mut keychain_txout::ChangeSet,
+        last_revealed: &mut BTreeMap<DescriptorId, u32>,
     ) -> Result<(), BdkRedbError> {
         let table = read_tx
             .open_table(self.last_revealed_table_defn())
             .map_err(redb::Error::from)?;
         table.iter().unwrap().for_each(|entry| {
-            changeset.last_revealed.insert(
+            last_revealed.insert(
                 entry.as_ref().unwrap().0.value().0,
                 entry.as_ref().unwrap().1.value(),
             );
@@ -808,14 +808,13 @@ impl Store {
     pub fn read_spks(
         &self,
         read_tx: &ReadTransaction,
-        changeset: &mut keychain_txout::ChangeSet,
+        spk_cache: &mut BTreeMap<DescriptorId, BTreeMap<u32, ScriptBuf>>,
     ) -> Result<(), BdkRedbError> {
         let table = read_tx
             .open_table(self.spk_table_defn())
             .map_err(redb::Error::from)?;
         table.iter().unwrap().for_each(|entry| {
-            changeset
-                .spk_cache
+            spk_cache
                 .entry(entry.as_ref().unwrap().0.value().0.0)
                 .or_default()
                 .insert(
@@ -887,8 +886,8 @@ impl Store {
         }
         self.read_local_chain(&read_tx, &mut changeset.local_chain)?;
         self.read_tx_graph::<ConfirmationBlockTime>(&read_tx, &mut changeset.tx_graph)?;
-        self.read_last_revealed(&read_tx, &mut changeset.indexer)?;
-        self.read_spks(&read_tx, &mut changeset.indexer)?;
+        self.read_last_revealed(&read_tx, &mut changeset.indexer.last_revealed)?;
+        self.read_spks(&read_tx, &mut changeset.indexer.spk_cache)?;
 
         Ok(())
     }
@@ -903,7 +902,7 @@ mod test {
             self, Amount, BlockHash, OutPoint, ScriptBuf, Transaction, TxIn, TxOut, absolute,
             transaction, transaction::Txid,
         },
-        chain::{DescriptorExt, Merge, local_chain},
+        chain::{DescriptorExt, Merge, keychain_txout, local_chain},
         descriptor::Descriptor,
         keys::DescriptorPublicKey,
     };
@@ -1585,15 +1584,20 @@ mod test {
 
         let write_tx = store.db.begin_write().unwrap();
         store
-            .persist_last_revealed(&write_tx, &keychain_txout_changeset)
+            .persist_last_revealed(&write_tx, &keychain_txout_changeset.last_revealed)
             .unwrap();
         write_tx.commit().unwrap();
 
         let mut changeset = keychain_txout::ChangeSet::default();
         let read_tx = store.db.begin_read().unwrap();
-        store.read_last_revealed(&read_tx, &mut changeset).unwrap();
+        store
+            .read_last_revealed(&read_tx, &mut changeset.last_revealed)
+            .unwrap();
 
-        assert_eq!(changeset, keychain_txout_changeset);
+        assert_eq!(
+            changeset.last_revealed,
+            keychain_txout_changeset.last_revealed
+        );
     }
 
     #[test]
@@ -1635,13 +1639,13 @@ mod test {
 
         let write_tx = store.db.begin_write().unwrap();
         store
-            .persist_spks(&write_tx, &keychain_txout_changeset)
+            .persist_spks(&write_tx, &keychain_txout_changeset.spk_cache)
             .unwrap();
         write_tx.commit().unwrap();
 
         let mut changeset = keychain_txout::ChangeSet::default();
         let read_tx = store.db.begin_read().unwrap();
-        store.read_spks(&read_tx, &mut changeset).unwrap();
+        store.read_spks(&read_tx, &mut changeset.spk_cache).unwrap();
 
         assert_eq!(changeset, keychain_txout_changeset);
     }
