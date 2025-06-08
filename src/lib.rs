@@ -304,6 +304,7 @@ pub struct Store {
     anchors_table_name: String,
     last_evicted_table_name: String,
     first_seen_table_name: String,
+    spk_table_name: String,
 }
 
 impl Store {
@@ -347,6 +348,10 @@ impl Store {
         TableDefinition::new(&self.first_seen_table_name)
     }
 
+    fn spk_table_defn(&self) -> TableDefinition<(DIDWrapper, u32), ScriptWrapper> {
+        TableDefinition::new(&self.spk_table_name)
+    }
+
     pub fn new<P>(file_path: P, wallet_name: String) -> Result<Self, BdkRedbError>
     where
         P: AsRef<Path>,
@@ -370,6 +375,8 @@ impl Store {
         last_evicted_table_name.push_str("_last_evicted");
         let mut first_seen_table_name = wallet_name.clone();
         first_seen_table_name.push_str("_first_seen");
+        let mut spk_table_name = wallet_name.clone();
+        spk_table_name.push_str("_spk");
         Ok(Store {
             db,
             wallet_name,
@@ -382,6 +389,7 @@ impl Store {
             anchors_table_name,
             last_evicted_table_name,
             first_seen_table_name,
+            spk_table_name,
         })
     }
 
@@ -588,6 +596,27 @@ impl Store {
         Ok(())
     }
 
+    pub fn persist_spks(
+        &self,
+        write_tx: &WriteTransaction,
+        changeset: &keychain_txout::ChangeSet,
+    ) -> Result<(), BdkRedbError> {
+        let mut table = write_tx
+            .open_table(self.spk_table_defn())
+            .map_err(redb::Error::from)?;
+        for (desc, map) in &changeset.spk_cache {
+            map.iter().for_each(|entry| {
+                table
+                    .insert(
+                        (DIDWrapper(*desc), *entry.0),
+                        ScriptWrapper((*entry.1).clone()),
+                    )
+                    .unwrap();
+            });
+        }
+        Ok(())
+    }
+
     pub fn persist_changeset(&self, changeset: &ChangeSet) -> Result<(), BdkRedbError> {
         let write_tx = self.db.begin_write().unwrap();
 
@@ -603,6 +632,7 @@ impl Store {
         self.persist_keychains(&write_tx, &desc_changeset)?;
         self.persist_local_chain(&write_tx, &changeset.local_chain)?;
         self.persist_last_revealed(&write_tx, &changeset.indexer)?;
+        self.persist_spks(&write_tx, &changeset.indexer)?;
         write_tx.commit().unwrap();
         self.persist_tx_graph::<ConfirmationBlockTime>(&changeset.tx_graph)?;
         Ok(())
@@ -775,6 +805,27 @@ impl Store {
         Ok(())
     }
 
+    pub fn read_spks(
+        &self,
+        read_tx: &ReadTransaction,
+        changeset: &mut keychain_txout::ChangeSet,
+    ) -> Result<(), BdkRedbError> {
+        let table = read_tx
+            .open_table(self.spk_table_defn())
+            .map_err(redb::Error::from)?;
+        table.iter().unwrap().for_each(|entry| {
+            changeset
+                .spk_cache
+                .entry(entry.as_ref().unwrap().0.value().0.0)
+                .or_default()
+                .insert(
+                    entry.as_ref().unwrap().0.value().1,
+                    entry.as_ref().unwrap().1.value().0,
+                );
+        });
+        Ok(())
+    }
+
     pub fn read_last_evicted(
         &self,
         read_tx: &ReadTransaction,
@@ -837,6 +888,7 @@ impl Store {
         self.read_local_chain(&read_tx, &mut changeset.local_chain)?;
         self.read_tx_graph::<ConfirmationBlockTime>(&read_tx, &mut changeset.tx_graph)?;
         self.read_last_revealed(&read_tx, &mut changeset.indexer)?;
+        self.read_spks(&read_tx, &mut changeset.indexer)?;
 
         Ok(())
     }
@@ -1528,7 +1580,7 @@ mod test {
 
         let keychain_txout_changeset = keychain_txout::ChangeSet {
             last_revealed: [(descriptor_ids[0], 1), (descriptor_ids[1], 100)].into(),
-            spk_cache: [].into(), // change this
+            spk_cache: [].into(),
         };
 
         let write_tx = store.db.begin_write().unwrap();
@@ -1540,6 +1592,56 @@ mod test {
         let mut changeset = keychain_txout::ChangeSet::default();
         let read_tx = store.db.begin_read().unwrap();
         store.read_last_revealed(&read_tx, &mut changeset).unwrap();
+
+        assert_eq!(changeset, keychain_txout_changeset);
+    }
+
+    #[test]
+    fn test_spks_persistence() {
+        let tmpfile = NamedTempFile::new().unwrap();
+        let store = create_test_store(tmpfile.path(), "wallet1");
+        let secp = bitcoin::secp256k1::Secp256k1::signing_only();
+
+        pub const DESCRIPTORS: [&str; 2] = [
+            "tr([73c5da0a/86'/0'/0']xprv9xgqHN7yz9MwCkxsBPN5qetuNdQSUttZNKw1dcYTV4mkaAFiBVGQziHs3NRSWMkCzvgjEe3n9xV8oYywvM8at9yRqyaZVz6TYYhX98VjsUk/0/*)",
+            "wpkh([73c5da0a/86'/0'/0']xprv9xgqHN7yz9MwCkxsBPN5qetuNdQSUttZNKw1dcYTV4mkaAFiBVGQziHs3NRSWMkCzvgjEe3n9xV8oYywvM8at9yRqyaZVz6TYYhX98VjsUk/1/0)",
+        ];
+
+        let descriptor_ids = DESCRIPTORS.map(|d| {
+            Descriptor::<DescriptorPublicKey>::parse_descriptor(&secp, d)
+                .unwrap()
+                .0
+                .descriptor_id()
+        });
+
+        let keychain_txout_changeset = keychain_txout::ChangeSet {
+            last_revealed: [].into(),
+            spk_cache: [
+                (
+                    descriptor_ids[0],
+                    [(0u32, ScriptBuf::from_bytes(vec![1, 2, 3]))].into(),
+                ),
+                (
+                    descriptor_ids[1],
+                    [
+                        (100u32, ScriptBuf::from_bytes(vec![3])),
+                        (1000u32, ScriptBuf::from_bytes(vec![5, 6, 8])),
+                    ]
+                    .into(),
+                ),
+            ]
+            .into(),
+        };
+
+        let write_tx = store.db.begin_write().unwrap();
+        store
+            .persist_spks(&write_tx, &keychain_txout_changeset)
+            .unwrap();
+        write_tx.commit().unwrap();
+
+        let mut changeset = keychain_txout::ChangeSet::default();
+        let read_tx = store.db.begin_read().unwrap();
+        store.read_spks(&read_tx, &mut changeset).unwrap();
 
         assert_eq!(changeset, keychain_txout_changeset);
     }
@@ -1596,7 +1698,21 @@ mod test {
                 (change_descriptor.descriptor_id(), 10),
             ]
             .into(),
-            spk_cache: [].into(), // change this
+            spk_cache: [
+                (
+                    descriptor.descriptor_id(),
+                    [(0u32, ScriptBuf::from_bytes(vec![245, 123, 112]))].into(),
+                ),
+                (
+                    change_descriptor.descriptor_id(),
+                    [
+                        (100u32, ScriptBuf::from_bytes(vec![145, 234, 98])),
+                        (1000u32, ScriptBuf::from_bytes(vec![5, 6, 8])),
+                    ]
+                    .into(),
+                ),
+            ]
+            .into(),
         };
 
         let changeset_persisted = ChangeSet {
