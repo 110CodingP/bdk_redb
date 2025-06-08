@@ -995,6 +995,8 @@ mod test {
             txouts: [].into(),
             anchors: [].into(),
             last_seen: [(tx1.compute_txid(), 100), (tx2.compute_txid(), 120)].into(),
+            first_seen: [(tx1.compute_txid(), 100), (tx2.compute_txid(), 120)].into(),
+            last_evicted: [].into(),
         };
 
         let write_tx = store.db.begin_write().unwrap();
@@ -1049,6 +1051,8 @@ mod test {
             .into(),
             anchors: [].into(),
             last_seen: [].into(),
+            first_seen: [].into(),
+            last_evicted: [].into(),
         };
 
         let write_tx = store.db.begin_write().unwrap();
@@ -1102,6 +1106,8 @@ mod test {
             txouts: [].into(),
             anchors: [].into(),
             last_seen: [].into(),
+            first_seen: [].into(),
+            last_evicted: [].into(),
         };
 
         let write_tx = store.db.begin_write().unwrap();
@@ -1171,6 +1177,8 @@ mod test {
             txouts: [].into(),
             anchors: [(anchor1, tx1.compute_txid()), (anchor2, tx2.compute_txid())].into(),
             last_seen: [].into(),
+            first_seen: [].into(),
+            last_evicted: [].into(),
         };
 
         let write_tx = store.db.begin_write().unwrap();
@@ -1199,6 +1207,8 @@ mod test {
             txouts: [].into(),
             anchors: [(anchor1, Txid::from_byte_array([3; 32]))].into(),
             last_seen: [].into(),
+            first_seen: [].into(),
+            last_evicted: [].into(),
         };
 
         let write_tx = store.db.begin_write().unwrap();
@@ -1255,6 +1265,8 @@ mod test {
             txouts: [].into(),
             anchors: [(conf_anchor, tx.compute_txid())].into(),
             last_seen: [].into(),
+            first_seen: [].into(),
+            last_evicted: [].into(),
         };
 
         store.persist_tx_graph(&tx_graph_changeset1).unwrap();
@@ -1295,6 +1307,8 @@ mod test {
             txouts: [].into(),
             anchors: [(conf_anchor, tx2.compute_txid())].into(),
             last_seen: [].into(),
+            first_seen: [].into(),
+            last_evicted: [].into(),
         };
 
         store.persist_tx_graph(&tx_graph_changeset2).unwrap();
@@ -1328,6 +1342,7 @@ mod test {
 
         let keychain_txout_changeset = keychain_txout::ChangeSet {
             last_revealed: [(descriptor_ids[0], 1), (descriptor_ids[1], 100)].into(),
+            spk_cache: [].into(), // change this
         };
 
         let write_tx = store.db.begin_write().unwrap();
@@ -1385,6 +1400,8 @@ mod test {
             txouts: [].into(),
             anchors: [(conf_anchor, tx.compute_txid())].into(),
             last_seen: [].into(),
+            first_seen: [].into(),
+            last_evicted: [].into(),
         };
 
         let keychain_txout_changeset = keychain_txout::ChangeSet {
@@ -1393,6 +1410,7 @@ mod test {
                 (change_descriptor.descriptor_id(), 10),
             ]
             .into(),
+            spk_cache: [].into(), // change this
         };
 
         let changeset_persisted = ChangeSet {

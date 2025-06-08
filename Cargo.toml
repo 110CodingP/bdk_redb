@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-bdk_wallet = "1.2.0"
+bdk_wallet = "2.0.0"
 ciborium = "0.2.2"
 redb = "2.5.0"
 serde = "1.0.219"
