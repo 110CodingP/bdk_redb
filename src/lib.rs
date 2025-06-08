@@ -113,34 +113,6 @@ impl Value for BlockHashWrapper {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-struct TxGraphChangeSetWrapper(tx_graph::ChangeSet<ConfirmationBlockTime>);
-
-impl Value for TxGraphChangeSetWrapper {
-    type SelfType<'a> = TxGraphChangeSetWrapper;
-    type AsBytes<'a> = Vec<u8>;
-    fn fixed_width() -> Option<usize> {
-        None
-    }
-    fn as_bytes<'a, 'b: 'a>(value: &'a Self::SelfType<'b>) -> Self::AsBytes<'a>
-    where
-        Self: 'b,
-    {
-        let mut vec: Vec<u8> = Vec::new();
-        ciborium::into_writer(value, &mut vec).unwrap();
-        vec
-    }
-    fn from_bytes<'a>(data: &'a [u8]) -> Self::SelfType<'a>
-    where
-        Self: 'a,
-    {
-        ciborium::from_reader(data).unwrap()
-    }
-    fn type_name() -> redb::TypeName {
-        TypeName::new("tx_graph")
-    }
-}
-
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 struct BlockIdWrapper(BlockId);
 
@@ -375,8 +347,6 @@ impl Store {
         P: AsRef<Path>,
     {
         let db = Database::create(file_path).map_err(redb::Error::from)?;
-        let mut network_table_name = wallet_name.clone();
-        network_table_name.push_str("_network");
         let mut keychain_table_name = wallet_name.clone();
         keychain_table_name.push_str("_keychain");
         let mut last_revealed_table_name = wallet_name.clone();
