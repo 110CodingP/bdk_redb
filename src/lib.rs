@@ -653,6 +653,7 @@ impl Store {
         let _ = write_tx.open_table(self.anchors_table_defn::<A>()).unwrap();
         let _ = write_tx.open_table(self.last_evicted_table_defn()).unwrap();
         let _ = write_tx.open_table(self.first_seen_table_defn()).unwrap();
+        let _ = write_tx.open_table(self.spk_table_defn()).unwrap();
 
         write_tx.commit().map_err(redb::Error::from)?;
         Ok(())
@@ -915,8 +916,7 @@ mod test {
     }
 
     fn create_test_store(path: impl AsRef<Path>, wallet_name: &str) -> Store {
-        let mut store = Store::new(path, wallet_name.to_string()).unwrap();
-        store.create_tables::<ConfirmationBlockTime>().unwrap();
+        let store = Store::new(path, wallet_name.to_string()).unwrap();
         store
     }
 
@@ -925,6 +925,7 @@ mod test {
         let tmpfile = NamedTempFile::new().unwrap();
         let store = create_test_store(tmpfile.path(), "wallet1");
         let write_tx = store.db.begin_write().unwrap();
+        let _ = write_tx.open_table(NETWORK).unwrap();
         let changeset = ChangeSet {
             network: Some(Network::Bitcoin),
             ..Default::default()
@@ -948,6 +949,7 @@ mod test {
         let tmpfile = NamedTempFile::new().unwrap();
         let store = create_test_store(tmpfile.path(), "wallet1");
         let write_tx = store.db.begin_write().unwrap();
+        let _ = write_tx.open_table(store.keychains_table_defn()).unwrap();
 
         let descriptor: Descriptor<DescriptorPublicKey> = "tr([5940b9b9/86'/0'/0']tpubDDVNqmq75GNPWQ9UNKfP43UwjaHU4GYfoPavojQbfpyfZp2KetWgjGBRRAy4tYCrAA6SB11mhQAkqxjh1VtQHyKwT4oYxpwLaGHvoKmtxZf/0/*)#44aqnlam".parse().unwrap();
         let change_descriptor: Descriptor<DescriptorPublicKey> = "tr([5940b9b9/86'/0'/0']tpubDDVNqmq75GNPWQ9UNKfP43UwjaHU4GYfoPavojQbfpyfZp2KetWgjGBRRAy4tYCrAA6SB11mhQAkqxjh1VtQHyKwT4oYxpwLaGHvoKmtxZf/1/*)#ypcpw2dr".parse().unwrap();
@@ -975,6 +977,7 @@ mod test {
         let tmpfile = NamedTempFile::new().unwrap();
         let store = create_test_store(tmpfile, "wallet_1");
         let write_tx = store.db.begin_write().unwrap();
+        let _ = write_tx.open_table(store.keychains_table_defn()).unwrap();
 
         let descriptor: Descriptor<DescriptorPublicKey> = "tr([5940b9b9/86'/0'/0']tpubDDVNqmq75GNPWQ9UNKfP43UwjaHU4GYfoPavojQbfpyfZp2KetWgjGBRRAy4tYCrAA6SB11mhQAkqxjh1VtQHyKwT4oYxpwLaGHvoKmtxZf/1/*)#ypcpw2dr".parse().unwrap();
         let change_descriptor: Descriptor<DescriptorPublicKey> = "tr([5940b9b9/86'/0'/0']tpubDDVNqmq75GNPWQ9UNKfP43UwjaHU4GYfoPavojQbfpyfZp2KetWgjGBRRAy4tYCrAA6SB11mhQAkqxjh1VtQHyKwT4oYxpwLaGHvoKmtxZf/0/*)#44aqnlam".parse().unwrap();
@@ -1003,6 +1006,7 @@ mod test {
         let store = create_test_store(tmpfile.path(), "wallet1");
 
         let write_tx = store.db.begin_write().unwrap();
+        let _ = write_tx.open_table(store.keychains_table_defn()).unwrap();
 
         let descriptor: Descriptor<DescriptorPublicKey> = "tr([5940b9b9/86'/0'/0']tpubDDVNqmq75GNPWQ9UNKfP43UwjaHU4GYfoPavojQbfpyfZp2KetWgjGBRRAy4tYCrAA6SB11mhQAkqxjh1VtQHyKwT4oYxpwLaGHvoKmtxZf/0/*)#44aqnlam".parse().unwrap();
 
@@ -1033,6 +1037,7 @@ mod test {
 
         let local_chain_changeset = local_chain::ChangeSet { blocks };
         let write_tx = store.db.begin_write().unwrap();
+        let _ = write_tx.open_table(store.local_chain_table_defn()).unwrap();
         store
             .persist_local_chain(&write_tx, &local_chain_changeset)
             .unwrap();
@@ -1109,6 +1114,8 @@ mod test {
         };
 
         let write_tx = store.db.begin_write().unwrap();
+        let _ = write_tx.open_table(store.txs_table_defn()).unwrap();
+        let _ = write_tx.open_table(store.last_seen_defn()).unwrap();
         store
             .persist_txs(&write_tx, &tx_graph_changeset1.txs)
             .unwrap();
@@ -1173,6 +1180,10 @@ mod test {
         };
 
         let write_tx = store.db.begin_write().unwrap();
+        let _ = write_tx.open_table(store.txs_table_defn()).unwrap();
+        let _ = write_tx
+            .open_table(store.last_evicted_table_defn())
+            .unwrap();
         store
             .persist_txs(&write_tx, &tx_graph_changeset1.txs)
             .unwrap();
@@ -1237,6 +1248,8 @@ mod test {
         };
 
         let write_tx = store.db.begin_write().unwrap();
+        let _ = write_tx.open_table(store.txs_table_defn()).unwrap();
+        let _ = write_tx.open_table(store.first_seen_table_defn()).unwrap();
         store
             .persist_txs(&write_tx, &tx_graph_changeset1.txs)
             .unwrap();
@@ -1293,6 +1306,7 @@ mod test {
         };
 
         let write_tx = store.db.begin_write().unwrap();
+        let _ = write_tx.open_table(store.txouts_table_defn()).unwrap();
         store
             .persist_txouts(&write_tx, &tx_graph_changeset1.txouts)
             .unwrap();
@@ -1348,6 +1362,7 @@ mod test {
         };
 
         let write_tx = store.db.begin_write().unwrap();
+        let _ = write_tx.open_table(store.txs_table_defn()).unwrap();
         store
             .persist_txs(&write_tx, &tx_graph_changeset1.txs)
             .unwrap();
@@ -1419,6 +1434,9 @@ mod test {
         };
 
         let write_tx = store.db.begin_write().unwrap();
+        let _ = write_tx
+            .open_table(store.anchors_table_defn::<ConfirmationBlockTime>())
+            .unwrap();
         store
             .persist_txs(&write_tx, &tx_graph_changeset1.txs)
             .unwrap();
@@ -1506,6 +1524,19 @@ mod test {
             last_evicted: [(tx.clone().compute_txid(), 150)].into(),
         };
 
+        let write_tx = store.db.begin_write().unwrap();
+        let _ = write_tx.open_table(store.txs_table_defn()).unwrap();
+        let _ = write_tx.open_table(store.txouts_table_defn()).unwrap();
+        let _ = write_tx
+            .open_table(store.anchors_table_defn::<ConfirmationBlockTime>())
+            .unwrap();
+        let _ = write_tx.open_table(store.last_seen_defn()).unwrap();
+        let _ = write_tx
+            .open_table(store.last_evicted_table_defn())
+            .unwrap();
+        let _ = write_tx.open_table(store.first_seen_table_defn()).unwrap();
+        write_tx.commit().unwrap();
+
         store.persist_tx_graph(&tx_graph_changeset1).unwrap();
 
         let mut changeset = tx_graph::ChangeSet::default();
@@ -1583,6 +1614,9 @@ mod test {
         };
 
         let write_tx = store.db.begin_write().unwrap();
+        let _ = write_tx
+            .open_table(store.last_revealed_table_defn())
+            .unwrap();
         store
             .persist_last_revealed(&write_tx, &keychain_txout_changeset.last_revealed)
             .unwrap();
@@ -1638,6 +1672,7 @@ mod test {
         };
 
         let write_tx = store.db.begin_write().unwrap();
+        let _ = write_tx.open_table(store.spk_table_defn()).unwrap();
         store
             .persist_spks(&write_tx, &keychain_txout_changeset.spk_cache)
             .unwrap();
@@ -1653,7 +1688,7 @@ mod test {
     #[test]
     fn test_persist_changeset() {
         let tmpfile = NamedTempFile::new().unwrap();
-        let store = create_test_store(tmpfile.path(), "wallet1");
+        let mut store = create_test_store(tmpfile.path(), "wallet1");
 
         let descriptor: Descriptor<DescriptorPublicKey> = "tr([5940b9b9/86'/0'/0']tpubDDVNqmq75GNPWQ9UNKfP43UwjaHU4GYfoPavojQbfpyfZp2KetWgjGBRRAy4tYCrAA6SB11mhQAkqxjh1VtQHyKwT4oYxpwLaGHvoKmtxZf/0/*)#44aqnlam".parse().unwrap();
         let change_descriptor: Descriptor<DescriptorPublicKey> = "tr([5940b9b9/86'/0'/0']tpubDDVNqmq75GNPWQ9UNKfP43UwjaHU4GYfoPavojQbfpyfZp2KetWgjGBRRAy4tYCrAA6SB11mhQAkqxjh1VtQHyKwT4oYxpwLaGHvoKmtxZf/1/*)#ypcpw2dr".parse().unwrap();
@@ -1727,6 +1762,8 @@ mod test {
             tx_graph: tx_graph_changeset,
             indexer: keychain_txout_changeset,
         };
+
+        store.create_tables::<ConfirmationBlockTime>().unwrap();
 
         store.persist_changeset(&changeset_persisted).unwrap();
         let mut changeset_read = ChangeSet::default();
