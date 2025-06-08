@@ -303,6 +303,7 @@ pub struct Store {
     txs_table_name: String,
     anchors_table_name: String,
     last_evicted_table_name: String,
+    first_seen_table_name: String,
 }
 
 impl Store {
@@ -342,6 +343,10 @@ impl Store {
         TableDefinition::new(&self.last_evicted_table_name)
     }
 
+    fn first_seen_table_defn(&self) -> TableDefinition<TxidWrapper, u64> {
+        TableDefinition::new(&self.first_seen_table_name)
+    }
+
     pub fn new<P>(file_path: P, wallet_name: String) -> Result<Self, BdkRedbError>
     where
         P: AsRef<Path>,
@@ -363,6 +368,8 @@ impl Store {
         anchors_table_name.push_str("_anchors");
         let mut last_evicted_table_name = wallet_name.clone();
         last_evicted_table_name.push_str("_last_evicted");
+        let mut first_seen_table_name = wallet_name.clone();
+        first_seen_table_name.push_str("_first_seen");
         Ok(Store {
             db,
             wallet_name,
@@ -374,6 +381,7 @@ impl Store {
             txs_table_name,
             anchors_table_name,
             last_evicted_table_name,
+            first_seen_table_name,
         })
     }
 
@@ -532,6 +540,22 @@ impl Store {
         Ok(())
     }
 
+    pub fn persist_first_seen(
+        &self,
+        write_tx: &WriteTransaction,
+        read_tx: &ReadTransaction,
+        first_seen: &BTreeMap<Txid, u64>,
+    ) -> Result<(), BdkRedbError> {
+        let mut table = write_tx.open_table(self.first_seen_table_defn()).unwrap();
+        let txs_table = read_tx.open_table(self.txs_table_defn()).unwrap();
+        for (tx, first_seen_time) in first_seen {
+            if txs_table.get(TxidWrapper(*tx)).unwrap().is_some() {
+                table.insert(TxidWrapper(*tx), first_seen_time).unwrap();
+            }
+        }
+        Ok(())
+    }
+
     pub fn persist_tx_graph<A: AnchorWithMetaData>(
         &self,
         changeset: &tx_graph::ChangeSet<A>,
@@ -545,6 +569,7 @@ impl Store {
         self.persist_anchors::<A>(&write_tx, &read_tx, &changeset.anchors)?;
         self.persist_last_seen(&write_tx, &read_tx, &changeset.last_seen)?;
         self.persist_last_evicted(&write_tx, &read_tx, &changeset.last_evicted)?;
+        self.persist_first_seen(&write_tx, &read_tx, &changeset.first_seen)?;
         write_tx.commit().unwrap();
         Ok(())
     }
@@ -597,6 +622,7 @@ impl Store {
         let _ = write_tx.open_table(self.txs_table_defn()).unwrap();
         let _ = write_tx.open_table(self.anchors_table_defn::<A>()).unwrap();
         let _ = write_tx.open_table(self.last_evicted_table_defn()).unwrap();
+        let _ = write_tx.open_table(self.first_seen_table_defn()).unwrap();
 
         write_tx.commit().map_err(redb::Error::from)?;
         Ok(())
@@ -728,6 +754,7 @@ impl Store {
         self.read_anchors::<A>(read_tx, &mut changeset.anchors)?;
         self.read_last_seen(read_tx, &mut changeset.last_seen)?;
         self.read_last_evicted(read_tx, &mut changeset.last_evicted)?;
+        self.read_first_seen(read_tx, &mut changeset.first_seen)?;
         Ok(())
     }
 
@@ -758,6 +785,23 @@ impl Store {
             .map_err(redb::Error::from)?;
         table.iter().unwrap().for_each(|entry| {
             last_evicted.insert(
+                entry.as_ref().unwrap().0.value().0,
+                entry.as_ref().unwrap().1.value(),
+            );
+        });
+        Ok(())
+    }
+
+    pub fn read_first_seen(
+        &self,
+        read_tx: &ReadTransaction,
+        first_seen: &mut BTreeMap<Txid, u64>,
+    ) -> Result<(), BdkRedbError> {
+        let table = read_tx
+            .open_table(self.first_seen_table_defn())
+            .map_err(redb::Error::from)?;
+        table.iter().unwrap().for_each(|entry| {
+            first_seen.insert(
                 entry.as_ref().unwrap().0.value().0,
                 entry.as_ref().unwrap().1.value(),
             );
@@ -1099,6 +1143,70 @@ mod test {
     }
 
     #[test]
+    fn test_persist_first_seen() {
+        let tmpfile = NamedTempFile::new().unwrap();
+        let store = create_test_store(tmpfile, "wallet_1");
+
+        let tx1 = Transaction {
+            version: transaction::Version::ONE,
+            lock_time: absolute::LockTime::ZERO,
+            input: vec![TxIn {
+                previous_output: OutPoint::null(),
+                ..Default::default()
+            }],
+            output: vec![TxOut {
+                value: Amount::from_sat(30_000),
+                script_pubkey: ScriptBuf::new(),
+            }],
+        };
+
+        let tx2 = Transaction {
+            version: transaction::Version::TWO,
+            lock_time: absolute::LockTime::ZERO,
+            input: vec![TxIn {
+                previous_output: OutPoint {
+                    txid: tx1.compute_txid(),
+                    vout: 0,
+                },
+                ..Default::default()
+            }],
+            output: vec![TxOut {
+                value: Amount::from_sat(20_000),
+                script_pubkey: ScriptBuf::new(),
+            }],
+        };
+
+        let tx_graph_changeset1 = tx_graph::ChangeSet::<ConfirmationBlockTime> {
+            txs: [Arc::new(tx1.clone()), Arc::new(tx2.clone())].into(),
+            txouts: [].into(),
+            anchors: [].into(),
+            last_seen: [(tx1.compute_txid(), 100), (tx2.compute_txid(), 240)].into(),
+            first_seen: [(tx1.compute_txid(), 100), (tx2.compute_txid(), 120)].into(),
+            last_evicted: [].into(),
+        };
+
+        let write_tx = store.db.begin_write().unwrap();
+        store
+            .persist_txs(&write_tx, &tx_graph_changeset1.txs)
+            .unwrap();
+        write_tx.commit().unwrap();
+
+        let write_tx = store.db.begin_write().unwrap();
+        let read_tx = store.db.begin_read().unwrap();
+        store
+            .persist_first_seen(&write_tx, &read_tx, &tx_graph_changeset1.first_seen)
+            .unwrap();
+        write_tx.commit().unwrap();
+
+        let read_tx = store.db.begin_read().unwrap();
+        let mut changeset = tx_graph::ChangeSet::<ConfirmationBlockTime>::default();
+        store
+            .read_first_seen(&read_tx, &mut changeset.first_seen)
+            .unwrap();
+        assert_eq!(changeset.first_seen, tx_graph_changeset1.first_seen);
+    }
+
+    #[test]
     fn test_persist_txouts() {
         let tmpfile = NamedTempFile::new().unwrap();
         let store = create_test_store(tmpfile, "wallet_1");
@@ -1343,7 +1451,7 @@ mod test {
             txouts: [].into(),
             anchors: [(conf_anchor, tx.clone().compute_txid())].into(),
             last_seen: [(tx.clone().compute_txid(), 100)].into(),
-            first_seen: [].into(),
+            first_seen: [(tx.clone().compute_txid(), 50)].into(),
             last_evicted: [(tx.clone().compute_txid(), 150)].into(),
         };
 
@@ -1478,7 +1586,7 @@ mod test {
             txouts: [].into(),
             anchors: [(conf_anchor, tx.compute_txid())].into(),
             last_seen: [(tx.clone().compute_txid(), 100)].into(),
-            first_seen: [].into(),
+            first_seen: [(tx.clone().compute_txid(), 80)].into(),
             last_evicted: [(tx.clone().compute_txid(), 150)].into(),
         };
 
