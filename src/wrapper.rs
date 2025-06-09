@@ -98,7 +98,7 @@ impl Value for BlockHashWrapper {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct BlockIdWrapper(pub(crate) BlockId);
 
 impl Value for BlockIdWrapper {
@@ -138,7 +138,7 @@ impl Key for BlockIdWrapper {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct DIDWrapper(pub(crate) DescriptorId);
 impl Value for DIDWrapper {
     type SelfType<'a> = DIDWrapper;
@@ -169,7 +169,7 @@ impl Key for DIDWrapper {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct TxidWrapper(pub(crate) Txid);
 
 impl Value for TxidWrapper {
