@@ -134,7 +134,9 @@ impl Value for BlockIdWrapper {
 
 impl Key for BlockIdWrapper {
     fn compare(data1: &[u8], data2: &[u8]) -> std::cmp::Ordering {
-        data1.cmp(data2)
+        let block1 = BlockIdWrapper::from_bytes(data1);
+        let block2 = BlockIdWrapper::from_bytes(data2);
+        block1.0.height.cmp(&block2.0.height)
     }
 }
 
