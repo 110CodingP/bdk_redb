@@ -1,4 +1,13 @@
 #[derive(Debug, thiserror::Error)]
+pub enum BdkRedbError {
+    #[error(transparent)]
+    RedbError(#[from] redb::Error),
+
+    #[error(transparent)]
+    DataMissingError(#[from] MissingError),
+}
+
+#[derive(Debug, thiserror::Error)]
 pub enum MissingError {
     #[error("network yet to be persisted")]
     NetworkPersistError,

@@ -1,295 +1,24 @@
+pub mod anchor_trait;
 mod error;
+mod wrapper;
 
+use anchor_trait::AnchorWithMetaData;
 use bdk_wallet::ChangeSet;
-use bdk_wallet::bitcoin::{self, Amount, Network, OutPoint, Txid, hashes::Hash};
-use bdk_wallet::bitcoin::{BlockHash, ScriptBuf, Transaction, TxOut};
-use bdk_wallet::chain::{
-    Anchor, BlockId, ConfirmationBlockTime, DescriptorId, local_chain, tx_graph,
-};
+use bdk_wallet::bitcoin::{self, Network, OutPoint, Txid};
+use bdk_wallet::bitcoin::{ScriptBuf, Transaction, TxOut};
+use bdk_wallet::chain::{ConfirmationBlockTime, DescriptorId, local_chain, tx_graph};
 use bdk_wallet::descriptor::{Descriptor, DescriptorPublicKey};
-use error::MissingError;
-use redb::{
-    Database, Key, ReadTransaction, ReadableTable, TableDefinition, TypeName, Value,
-    WriteTransaction,
-};
-use serde::{Deserialize, Serialize};
+use error::{BdkRedbError, MissingError};
+use redb::{Database, ReadTransaction, ReadableTable, TableDefinition, WriteTransaction};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::{path::Path, str::FromStr};
+use wrapper::{
+    AmountWrapper, BlockHashWrapper, BlockIdWrapper, DIDWrapper, ScriptWrapper, TransactionWrapper,
+    TxidWrapper,
+};
 
 const NETWORK: TableDefinition<&str, String> = TableDefinition::new("network");
-
-#[derive(Debug, Serialize, Deserialize)]
-struct ScriptWrapper(ScriptBuf);
-impl Value for ScriptWrapper {
-    type SelfType<'a> = ScriptWrapper;
-    type AsBytes<'a> = Vec<u8>;
-    fn fixed_width() -> Option<usize> {
-        None
-    }
-    fn as_bytes<'a, 'b: 'a>(value: &'a Self::SelfType<'b>) -> Self::AsBytes<'a>
-    where
-        Self: 'b,
-    {
-        value.0.clone().into_bytes()
-    }
-    fn from_bytes<'a>(data: &'a [u8]) -> Self::SelfType<'a>
-    where
-        Self: 'a,
-    {
-        ScriptWrapper(ScriptBuf::from_bytes(data.to_vec()))
-    }
-    fn type_name() -> redb::TypeName {
-        TypeName::new("tx_graph")
-    }
-}
-
-impl Key for ScriptWrapper {
-    fn compare(data1: &[u8], data2: &[u8]) -> std::cmp::Ordering {
-        let vec1 = data1.to_vec();
-        let vec2 = data2.to_vec();
-        vec1[0].cmp(&vec2[0])
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct TransactionWrapper(bitcoin::Transaction);
-impl Value for TransactionWrapper {
-    type SelfType<'a> = TransactionWrapper;
-    type AsBytes<'a> = Vec<u8>;
-    fn fixed_width() -> Option<usize> {
-        None
-    }
-    fn as_bytes<'a, 'b: 'a>(value: &'a Self::SelfType<'b>) -> Self::AsBytes<'a>
-    where
-        Self: 'b,
-    {
-        let mut vec: Vec<u8> = Vec::new();
-        ciborium::into_writer(value, &mut vec).unwrap();
-        vec
-    }
-    fn from_bytes<'a>(data: &'a [u8]) -> Self::SelfType<'a>
-    where
-        Self: 'a,
-    {
-        ciborium::from_reader(data).unwrap()
-    }
-    fn type_name() -> redb::TypeName {
-        TypeName::new("transaction")
-    }
-}
-
-impl Key for TransactionWrapper {
-    fn compare(data1: &[u8], data2: &[u8]) -> std::cmp::Ordering {
-        let tx1: TransactionWrapper = ciborium::from_reader(data1).unwrap();
-        let tx2: TransactionWrapper = ciborium::from_reader(data2).unwrap();
-        tx1.0.version.cmp(&tx2.0.version)
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct BlockHashWrapper(BlockHash);
-
-impl Value for BlockHashWrapper {
-    type SelfType<'a> = BlockHashWrapper;
-    type AsBytes<'a> = [u8; 32];
-    fn fixed_width() -> Option<usize> {
-        Some(32usize)
-    }
-    fn as_bytes<'a, 'b: 'a>(value: &'a Self::SelfType<'b>) -> Self::AsBytes<'a>
-    where
-        Self: 'b,
-    {
-        value.0.to_byte_array()
-    }
-    fn from_bytes<'a>(data: &'a [u8]) -> Self::SelfType<'a>
-    where
-        Self: 'a,
-    {
-        BlockHashWrapper(BlockHash::from_slice(data).unwrap())
-    }
-    fn type_name() -> redb::TypeName {
-        TypeName::new("block_hash")
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
-struct BlockIdWrapper(BlockId);
-
-impl Value for BlockIdWrapper {
-    type SelfType<'a> = BlockIdWrapper;
-    type AsBytes<'a> = [u8; 36];
-    fn fixed_width() -> Option<usize> {
-        Some(36usize)
-    }
-    fn as_bytes<'a, 'b: 'a>(value: &'a Self::SelfType<'b>) -> Self::AsBytes<'a>
-    where
-        Self: 'b,
-    {
-        let mut bytes: [u8; 36] = [0; 36];
-        bytes[0..4].copy_from_slice(&value.0.height.to_le_bytes());
-        bytes[4..].copy_from_slice(&value.0.hash.to_byte_array());
-        bytes
-    }
-    fn from_bytes<'a>(data: &'a [u8]) -> Self::SelfType<'a>
-    where
-        Self: 'a,
-    {
-        let bytes: [u8; 36] = data.try_into().unwrap();
-        let block_id = BlockId {
-            height: u32::from_le_bytes(bytes[0..4].try_into().unwrap()),
-            hash: BlockHash::from_slice(&bytes[4..]).unwrap(),
-        };
-        BlockIdWrapper(block_id)
-    }
-    fn type_name() -> redb::TypeName {
-        TypeName::new("block_id")
-    }
-}
-
-impl Key for BlockIdWrapper {
-    fn compare(data1: &[u8], data2: &[u8]) -> std::cmp::Ordering {
-        data1.cmp(data2)
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
-struct DIDWrapper(DescriptorId);
-impl Value for DIDWrapper {
-    type SelfType<'a> = DIDWrapper;
-    type AsBytes<'a> = [u8; 32];
-    fn fixed_width() -> Option<usize> {
-        Some(32usize)
-    }
-    fn as_bytes<'a, 'b: 'a>(value: &'a Self::SelfType<'b>) -> Self::AsBytes<'a>
-    where
-        Self: 'b,
-    {
-        value.0.to_byte_array()
-    }
-    fn from_bytes<'a>(data: &'a [u8]) -> Self::SelfType<'a>
-    where
-        Self: 'a,
-    {
-        DIDWrapper(DescriptorId::from_slice(data).unwrap())
-    }
-    fn type_name() -> redb::TypeName {
-        TypeName::new("descriptor_id")
-    }
-}
-
-impl Key for DIDWrapper {
-    fn compare(data1: &[u8], data2: &[u8]) -> std::cmp::Ordering {
-        data1.cmp(data2)
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
-struct TxidWrapper(Txid);
-
-impl Value for TxidWrapper {
-    type SelfType<'a> = TxidWrapper;
-    type AsBytes<'a> = [u8; 32];
-    fn fixed_width() -> Option<usize> {
-        Some(32usize)
-    }
-    fn as_bytes<'a, 'b: 'a>(value: &'a Self::SelfType<'b>) -> Self::AsBytes<'a>
-    where
-        Self: 'b,
-    {
-        value.0.to_byte_array()
-    }
-    fn from_bytes<'a>(data: &'a [u8]) -> Self::SelfType<'a>
-    where
-        Self: 'a,
-    {
-        TxidWrapper(Txid::from_slice(data).unwrap())
-    }
-    fn type_name() -> redb::TypeName {
-        TypeName::new("txid")
-    }
-}
-
-impl Key for TxidWrapper {
-    fn compare(data1: &[u8], data2: &[u8]) -> std::cmp::Ordering {
-        data1.cmp(data2)
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct AmountWrapper(Amount);
-
-impl Value for AmountWrapper {
-    type SelfType<'a> = AmountWrapper;
-    type AsBytes<'a> = [u8; 8];
-    fn fixed_width() -> Option<usize> {
-        Some(32usize)
-    }
-    fn as_bytes<'a, 'b: 'a>(value: &'a Self::SelfType<'b>) -> Self::AsBytes<'a>
-    where
-        Self: 'b,
-    {
-        value.0.to_sat().to_le_bytes()
-    }
-    fn from_bytes<'a>(data: &'a [u8]) -> Self::SelfType<'a>
-    where
-        Self: 'a,
-    {
-        AmountWrapper(Amount::from_sat(u64::from_le_bytes(
-            data.try_into().unwrap(),
-        )))
-    }
-    fn type_name() -> redb::TypeName {
-        TypeName::new("txid")
-    }
-}
-
-pub trait AnchorWithMetaData: Anchor {
-    type MetaDataType: Value + 'static;
-
-    // to be used as value in anchors table
-    fn metadata(&self) -> <Self::MetaDataType as redb::Value>::SelfType<'_>;
-
-    // to use in read_anchors
-    fn from_id(id: BlockId, metadata: <Self::MetaDataType as redb::Value>::SelfType<'_>) -> Self;
-}
-
-impl AnchorWithMetaData for ConfirmationBlockTime {
-    type MetaDataType = u64;
-
-    fn metadata(&self) -> <Self::MetaDataType as redb::Value>::SelfType<'_> {
-        self.confirmation_time
-    }
-
-    fn from_id(id: BlockId, metadata: <Self::MetaDataType as redb::Value>::SelfType<'_>) -> Self {
-        ConfirmationBlockTime {
-            block_id: id,
-            confirmation_time: metadata,
-        }
-    }
-}
-
-impl AnchorWithMetaData for BlockId {
-    type MetaDataType = Option<()>;
-
-    fn metadata(&self) -> <Self::MetaDataType as redb::Value>::SelfType<'_> {
-        None
-    }
-
-    fn from_id(id: BlockId, metadata: <Self::MetaDataType as redb::Value>::SelfType<'_>) -> Self {
-        let _ = metadata;
-        id
-    }
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum BdkRedbError {
-    #[error(transparent)]
-    RedbError(#[from] redb::Error),
-
-    #[error(transparent)]
-    DataMissingError(#[from] MissingError),
-}
 
 pub struct Store {
     db: Database,
@@ -312,12 +41,12 @@ impl Store {
         TableDefinition::new(&self.keychain_table_name)
     }
 
-    fn last_revealed_table_defn(&self) -> TableDefinition<DIDWrapper, u32> {
-        TableDefinition::new(&self.last_revealed_table_name)
-    }
-
     fn local_chain_table_defn(&self) -> TableDefinition<u32, BlockHashWrapper> {
         TableDefinition::new(&self.local_chain_table_name)
+    }
+
+    fn txs_table_defn(&self) -> TableDefinition<TxidWrapper, TransactionWrapper> {
+        TableDefinition::new(&self.txs_table_name)
     }
 
     fn txouts_table_defn(
@@ -326,18 +55,14 @@ impl Store {
         TableDefinition::new(&self.txouts_table_name)
     }
 
-    fn last_seen_defn(&self) -> TableDefinition<TxidWrapper, u64> {
-        TableDefinition::new(&self.last_seen_table_name)
-    }
-
-    fn txs_table_defn(&self) -> TableDefinition<TxidWrapper, TransactionWrapper> {
-        TableDefinition::new(&self.txs_table_name)
-    }
-
     fn anchors_table_defn<A: AnchorWithMetaData>(
         &self,
     ) -> TableDefinition<(TxidWrapper, BlockIdWrapper), A::MetaDataType> {
         TableDefinition::new(&self.anchors_table_name)
+    }
+
+    fn last_seen_defn(&self) -> TableDefinition<TxidWrapper, u64> {
+        TableDefinition::new(&self.last_seen_table_name)
     }
 
     fn last_evicted_table_defn(&self) -> TableDefinition<TxidWrapper, u64> {
@@ -346,6 +71,10 @@ impl Store {
 
     fn first_seen_table_defn(&self) -> TableDefinition<TxidWrapper, u64> {
         TableDefinition::new(&self.first_seen_table_name)
+    }
+
+    fn last_revealed_table_defn(&self) -> TableDefinition<DIDWrapper, u32> {
+        TableDefinition::new(&self.last_revealed_table_name)
     }
 
     fn spk_table_defn(&self) -> TableDefinition<(DIDWrapper, u32), ScriptWrapper> {
@@ -359,51 +88,97 @@ impl Store {
         let db = Database::create(file_path).map_err(redb::Error::from)?;
         let mut keychain_table_name = wallet_name.clone();
         keychain_table_name.push_str("_keychain");
-        let mut last_revealed_table_name = wallet_name.clone();
-        last_revealed_table_name.push_str("_last_revealed");
         let mut local_chain_table_name = wallet_name.clone();
         local_chain_table_name.push_str("_local_chain");
-        let mut txouts_table_name = wallet_name.clone();
-        txouts_table_name.push_str("_txouts");
-        let mut last_seen_table_name = wallet_name.clone();
-        last_seen_table_name.push_str("_last_seen");
         let mut txs_table_name = wallet_name.clone();
         txs_table_name.push_str("_txs");
+        let mut txouts_table_name = wallet_name.clone();
+        txouts_table_name.push_str("_txouts");
         let mut anchors_table_name = wallet_name.clone();
         anchors_table_name.push_str("_anchors");
+        let mut last_seen_table_name = wallet_name.clone();
+        last_seen_table_name.push_str("_last_seen");
         let mut last_evicted_table_name = wallet_name.clone();
         last_evicted_table_name.push_str("_last_evicted");
         let mut first_seen_table_name = wallet_name.clone();
         first_seen_table_name.push_str("_first_seen");
+        let mut last_revealed_table_name = wallet_name.clone();
+        last_revealed_table_name.push_str("_last_revealed");
         let mut spk_table_name = wallet_name.clone();
         spk_table_name.push_str("_spk");
         Ok(Store {
             db,
             wallet_name,
             keychain_table_name,
-            last_revealed_table_name,
             local_chain_table_name,
-            txouts_table_name,
-            last_seen_table_name,
             txs_table_name,
+            txouts_table_name,
             anchors_table_name,
+            last_seen_table_name,
             last_evicted_table_name,
             first_seen_table_name,
+            last_revealed_table_name,
             spk_table_name,
         })
     }
 
-    pub fn persist_network(
-        &self,
-        write_tx: &WriteTransaction,
-        network: &Option<bitcoin::Network>,
-    ) -> Result<(), BdkRedbError> {
-        let mut table = write_tx.open_table(NETWORK).map_err(redb::Error::from)?;
+    pub fn create_tables<A: AnchorWithMetaData>(&mut self) -> Result<(), BdkRedbError> {
+        let write_tx = self.db.begin_write().map_err(redb::Error::from)?;
 
-        // assuming network will be persisted once and only once
-        if let Some(network) = network {
-            let _ = table.insert(&*self.wallet_name, network.to_string());
+        let _ = write_tx.open_table(NETWORK).unwrap();
+        let _ = write_tx.open_table(self.keychains_table_defn()).unwrap();
+        let _ = write_tx
+            .open_table(self.last_revealed_table_defn())
+            .unwrap();
+        let _ = write_tx.open_table(self.local_chain_table_defn()).unwrap();
+        let _ = write_tx.open_table(self.txouts_table_defn()).unwrap();
+        let _ = write_tx.open_table(self.last_seen_defn()).unwrap();
+        let _ = write_tx.open_table(self.txs_table_defn()).unwrap();
+        let _ = write_tx.open_table(self.anchors_table_defn::<A>()).unwrap();
+        let _ = write_tx.open_table(self.last_evicted_table_defn()).unwrap();
+        let _ = write_tx.open_table(self.first_seen_table_defn()).unwrap();
+        let _ = write_tx.open_table(self.spk_table_defn()).unwrap();
+
+        write_tx.commit().map_err(redb::Error::from)?;
+        Ok(())
+    }
+
+    pub fn persist_changeset(&self, changeset: &ChangeSet) -> Result<(), BdkRedbError> {
+        let write_tx = self.db.begin_write().unwrap();
+
+        self.persist_network(&write_tx, &changeset.network)?;
+        let mut desc_changeset: BTreeMap<u64, Option<Descriptor<DescriptorPublicKey>>> =
+            BTreeMap::new();
+        if let Some(desc) = &changeset.descriptor {
+            desc_changeset.insert(0, Some(desc.clone()));
+            if let Some(change_desc) = &changeset.change_descriptor {
+                desc_changeset.insert(1, Some(change_desc.clone()));
+            }
         }
+        self.persist_keychains(&write_tx, &desc_changeset)?;
+        self.persist_local_chain(&write_tx, &changeset.local_chain)?;
+        self.persist_last_revealed(&write_tx, &changeset.indexer.last_revealed)?;
+        self.persist_spks(&write_tx, &changeset.indexer.spk_cache)?;
+        write_tx.commit().unwrap();
+        self.persist_tx_graph::<ConfirmationBlockTime>(&changeset.tx_graph)?;
+        Ok(())
+    }
+
+    pub fn persist_tx_graph<A: AnchorWithMetaData>(
+        &self,
+        changeset: &tx_graph::ChangeSet<A>,
+    ) -> Result<(), BdkRedbError> {
+        let write_tx = self.db.begin_write().unwrap();
+        self.persist_txs(&write_tx, &changeset.txs)?;
+        self.persist_txouts(&write_tx, &changeset.txouts)?;
+        write_tx.commit().unwrap();
+        let write_tx = self.db.begin_write().unwrap();
+        let read_tx = self.db.begin_read().unwrap();
+        self.persist_anchors::<A>(&write_tx, &read_tx, &changeset.anchors)?;
+        self.persist_last_seen(&write_tx, &read_tx, &changeset.last_seen)?;
+        self.persist_last_evicted(&write_tx, &read_tx, &changeset.last_evicted)?;
+        self.persist_first_seen(&write_tx, &read_tx, &changeset.first_seen)?;
+        write_tx.commit().unwrap();
         Ok(())
     }
 
@@ -429,6 +204,20 @@ impl Store {
         Ok(())
     }
 
+    pub fn persist_network(
+        &self,
+        write_tx: &WriteTransaction,
+        network: &Option<bitcoin::Network>,
+    ) -> Result<(), BdkRedbError> {
+        let mut table = write_tx.open_table(NETWORK).map_err(redb::Error::from)?;
+
+        // assuming network will be persisted once and only once
+        if let Some(network) = network {
+            let _ = table.insert(&*self.wallet_name, network.to_string());
+        }
+        Ok(())
+    }
+
     pub fn persist_local_chain(
         &self,
         write_tx: &WriteTransaction,
@@ -446,22 +235,21 @@ impl Store {
         Ok(())
     }
 
-    pub fn persist_last_seen(
+    pub fn persist_txs(
         &self,
         write_tx: &WriteTransaction,
-        read_tx: &ReadTransaction,
-        last_seen: &BTreeMap<Txid, u64>,
+        txs: &BTreeSet<Arc<Transaction>>,
     ) -> Result<(), BdkRedbError> {
         let mut table = write_tx
-            .open_table(self.last_seen_defn())
-            .map_err(redb::Error::from)?;
-        let txs_table = read_tx
             .open_table(self.txs_table_defn())
             .map_err(redb::Error::from)?;
-        for (txid, last_seen_time) in last_seen {
-            if txs_table.get(TxidWrapper(*txid)).unwrap().is_some() {
-                table.insert(TxidWrapper(*txid), *last_seen_time).unwrap();
-            }
+        for tx in txs {
+            table
+                .insert(
+                    TxidWrapper(tx.compute_txid()),
+                    TransactionWrapper((**tx).clone()),
+                )
+                .unwrap();
         }
         Ok(())
     }
@@ -488,25 +276,6 @@ impl Store {
         Ok(())
     }
 
-    pub fn persist_txs(
-        &self,
-        write_tx: &WriteTransaction,
-        txs: &BTreeSet<Arc<Transaction>>,
-    ) -> Result<(), BdkRedbError> {
-        let mut table = write_tx
-            .open_table(self.txs_table_defn())
-            .map_err(redb::Error::from)?;
-        for tx in txs {
-            table
-                .insert(
-                    TxidWrapper(tx.compute_txid()),
-                    TransactionWrapper((**tx).clone()),
-                )
-                .unwrap();
-        }
-        Ok(())
-    }
-
     pub fn persist_anchors<A: AnchorWithMetaData>(
         &self,
         write_tx: &WriteTransaction,
@@ -527,6 +296,26 @@ impl Store {
                         &anchor.metadata(),
                     )
                     .unwrap();
+            }
+        }
+        Ok(())
+    }
+
+    pub fn persist_last_seen(
+        &self,
+        write_tx: &WriteTransaction,
+        read_tx: &ReadTransaction,
+        last_seen: &BTreeMap<Txid, u64>,
+    ) -> Result<(), BdkRedbError> {
+        let mut table = write_tx
+            .open_table(self.last_seen_defn())
+            .map_err(redb::Error::from)?;
+        let txs_table = read_tx
+            .open_table(self.txs_table_defn())
+            .map_err(redb::Error::from)?;
+        for (txid, last_seen_time) in last_seen {
+            if txs_table.get(TxidWrapper(*txid)).unwrap().is_some() {
+                table.insert(TxidWrapper(*txid), *last_seen_time).unwrap();
             }
         }
         Ok(())
@@ -561,24 +350,6 @@ impl Store {
                 table.insert(TxidWrapper(*tx), first_seen_time).unwrap();
             }
         }
-        Ok(())
-    }
-
-    pub fn persist_tx_graph<A: AnchorWithMetaData>(
-        &self,
-        changeset: &tx_graph::ChangeSet<A>,
-    ) -> Result<(), BdkRedbError> {
-        let write_tx = self.db.begin_write().unwrap();
-        self.persist_txs(&write_tx, &changeset.txs)?;
-        self.persist_txouts(&write_tx, &changeset.txouts)?;
-        write_tx.commit().unwrap();
-        let write_tx = self.db.begin_write().unwrap();
-        let read_tx = self.db.begin_read().unwrap();
-        self.persist_anchors::<A>(&write_tx, &read_tx, &changeset.anchors)?;
-        self.persist_last_seen(&write_tx, &read_tx, &changeset.last_seen)?;
-        self.persist_last_evicted(&write_tx, &read_tx, &changeset.last_evicted)?;
-        self.persist_first_seen(&write_tx, &read_tx, &changeset.first_seen)?;
-        write_tx.commit().unwrap();
         Ok(())
     }
 
@@ -617,62 +388,38 @@ impl Store {
         Ok(())
     }
 
-    pub fn persist_changeset(&self, changeset: &ChangeSet) -> Result<(), BdkRedbError> {
-        let write_tx = self.db.begin_write().unwrap();
+    pub fn read_changeset(&self, changeset: &mut ChangeSet) -> Result<(), BdkRedbError> {
+        let read_tx = self.db.begin_read().unwrap();
 
-        self.persist_network(&write_tx, &changeset.network)?;
+        self.read_network(&read_tx, &mut changeset.network)?;
         let mut desc_changeset: BTreeMap<u64, Option<Descriptor<DescriptorPublicKey>>> =
             BTreeMap::new();
-        if let Some(desc) = &changeset.descriptor {
-            desc_changeset.insert(0, Some(desc.clone()));
-            if let Some(change_desc) = &changeset.change_descriptor {
-                desc_changeset.insert(1, Some(change_desc.clone()));
+        self.read_keychains(&read_tx, &mut desc_changeset)?;
+        if let Some(desc) = desc_changeset.get(&0).unwrap() {
+            changeset.descriptor = Some(desc.clone());
+            if let Some(change_desc) = desc_changeset.get(&1).unwrap() {
+                changeset.change_descriptor = Some(change_desc.clone());
             }
         }
-        self.persist_keychains(&write_tx, &desc_changeset)?;
-        self.persist_local_chain(&write_tx, &changeset.local_chain)?;
-        self.persist_last_revealed(&write_tx, &changeset.indexer.last_revealed)?;
-        self.persist_spks(&write_tx, &changeset.indexer.spk_cache)?;
-        write_tx.commit().unwrap();
-        self.persist_tx_graph::<ConfirmationBlockTime>(&changeset.tx_graph)?;
+        self.read_local_chain(&read_tx, &mut changeset.local_chain)?;
+        self.read_tx_graph::<ConfirmationBlockTime>(&read_tx, &mut changeset.tx_graph)?;
+        self.read_last_revealed(&read_tx, &mut changeset.indexer.last_revealed)?;
+        self.read_spks(&read_tx, &mut changeset.indexer.spk_cache)?;
+
         Ok(())
     }
 
-    pub fn create_tables<A: AnchorWithMetaData>(&mut self) -> Result<(), BdkRedbError> {
-        let write_tx = self.db.begin_write().map_err(redb::Error::from)?;
-
-        let _ = write_tx.open_table(NETWORK).unwrap();
-        let _ = write_tx.open_table(self.keychains_table_defn()).unwrap();
-        let _ = write_tx
-            .open_table(self.last_revealed_table_defn())
-            .unwrap();
-        let _ = write_tx.open_table(self.local_chain_table_defn()).unwrap();
-        let _ = write_tx.open_table(self.txouts_table_defn()).unwrap();
-        let _ = write_tx.open_table(self.last_seen_defn()).unwrap();
-        let _ = write_tx.open_table(self.txs_table_defn()).unwrap();
-        let _ = write_tx.open_table(self.anchors_table_defn::<A>()).unwrap();
-        let _ = write_tx.open_table(self.last_evicted_table_defn()).unwrap();
-        let _ = write_tx.open_table(self.first_seen_table_defn()).unwrap();
-        let _ = write_tx.open_table(self.spk_table_defn()).unwrap();
-
-        write_tx.commit().map_err(redb::Error::from)?;
-        Ok(())
-    }
-
-    pub fn read_network(
+    pub fn read_tx_graph<A: AnchorWithMetaData>(
         &self,
         read_tx: &ReadTransaction,
-        network: &mut Option<bitcoin::Network>,
+        changeset: &mut tx_graph::ChangeSet<A>,
     ) -> Result<(), BdkRedbError> {
-        let table = read_tx.open_table(NETWORK).map_err(redb::Error::from)?;
-        *network = match table.get(&*self.wallet_name).map_err(redb::Error::from)? {
-            Some(network) => Some(Network::from_str(&network.value()).expect("parse network")),
-            None => {
-                return Err(BdkRedbError::DataMissingError(
-                    MissingError::NetworkPersistError,
-                ));
-            }
-        };
+        self.read_txs(read_tx, &mut changeset.txs)?;
+        self.read_txouts(read_tx, &mut changeset.txouts)?;
+        self.read_anchors::<A>(read_tx, &mut changeset.anchors)?;
+        self.read_last_seen(read_tx, &mut changeset.last_seen)?;
+        self.read_last_evicted(read_tx, &mut changeset.last_evicted)?;
+        self.read_first_seen(read_tx, &mut changeset.first_seen)?;
         Ok(())
     }
 
@@ -698,6 +445,23 @@ impl Store {
         Ok(())
     }
 
+    pub fn read_network(
+        &self,
+        read_tx: &ReadTransaction,
+        network: &mut Option<bitcoin::Network>,
+    ) -> Result<(), BdkRedbError> {
+        let table = read_tx.open_table(NETWORK).map_err(redb::Error::from)?;
+        *network = match table.get(&*self.wallet_name).map_err(redb::Error::from)? {
+            Some(network) => Some(Network::from_str(&network.value()).expect("parse network")),
+            None => {
+                return Err(BdkRedbError::DataMissingError(
+                    MissingError::NetworkPersistError,
+                ));
+            }
+        };
+        Ok(())
+    }
+
     pub fn read_local_chain(
         &self,
         read_tx: &ReadTransaction,
@@ -717,19 +481,14 @@ impl Store {
         Ok(())
     }
 
-    pub fn read_last_seen(
+    pub fn read_txs(
         &self,
         read_tx: &ReadTransaction,
-        last_seen: &mut BTreeMap<Txid, u64>,
+        txs: &mut BTreeSet<Arc<Transaction>>,
     ) -> Result<(), BdkRedbError> {
-        let table = read_tx
-            .open_table(self.last_seen_defn())
-            .map_err(redb::Error::from)?;
+        let table = read_tx.open_table(self.txs_table_defn()).unwrap();
         table.iter().unwrap().for_each(|entry| {
-            last_seen.insert(
-                entry.as_ref().unwrap().0.value().0,
-                entry.as_ref().unwrap().1.value(),
-            );
+            txs.insert(Arc::new(entry.unwrap().1.value().0));
         });
         Ok(())
     }
@@ -775,17 +534,54 @@ impl Store {
         Ok(())
     }
 
-    pub fn read_tx_graph<A: AnchorWithMetaData>(
+    pub fn read_last_seen(
         &self,
         read_tx: &ReadTransaction,
-        changeset: &mut tx_graph::ChangeSet<A>,
+        last_seen: &mut BTreeMap<Txid, u64>,
     ) -> Result<(), BdkRedbError> {
-        self.read_txs(read_tx, &mut changeset.txs)?;
-        self.read_txouts(read_tx, &mut changeset.txouts)?;
-        self.read_anchors::<A>(read_tx, &mut changeset.anchors)?;
-        self.read_last_seen(read_tx, &mut changeset.last_seen)?;
-        self.read_last_evicted(read_tx, &mut changeset.last_evicted)?;
-        self.read_first_seen(read_tx, &mut changeset.first_seen)?;
+        let table = read_tx
+            .open_table(self.last_seen_defn())
+            .map_err(redb::Error::from)?;
+        table.iter().unwrap().for_each(|entry| {
+            last_seen.insert(
+                entry.as_ref().unwrap().0.value().0,
+                entry.as_ref().unwrap().1.value(),
+            );
+        });
+        Ok(())
+    }
+
+    pub fn read_last_evicted(
+        &self,
+        read_tx: &ReadTransaction,
+        last_evicted: &mut BTreeMap<Txid, u64>,
+    ) -> Result<(), BdkRedbError> {
+        let table = read_tx
+            .open_table(self.last_evicted_table_defn())
+            .map_err(redb::Error::from)?;
+        table.iter().unwrap().for_each(|entry| {
+            last_evicted.insert(
+                entry.as_ref().unwrap().0.value().0,
+                entry.as_ref().unwrap().1.value(),
+            );
+        });
+        Ok(())
+    }
+
+    pub fn read_first_seen(
+        &self,
+        read_tx: &ReadTransaction,
+        first_seen: &mut BTreeMap<Txid, u64>,
+    ) -> Result<(), BdkRedbError> {
+        let table = read_tx
+            .open_table(self.first_seen_table_defn())
+            .map_err(redb::Error::from)?;
+        table.iter().unwrap().for_each(|entry| {
+            first_seen.insert(
+                entry.as_ref().unwrap().0.value().0,
+                entry.as_ref().unwrap().1.value(),
+            );
+        });
         Ok(())
     }
 
@@ -825,73 +621,6 @@ impl Store {
         });
         Ok(())
     }
-
-    pub fn read_last_evicted(
-        &self,
-        read_tx: &ReadTransaction,
-        last_evicted: &mut BTreeMap<Txid, u64>,
-    ) -> Result<(), BdkRedbError> {
-        let table = read_tx
-            .open_table(self.last_evicted_table_defn())
-            .map_err(redb::Error::from)?;
-        table.iter().unwrap().for_each(|entry| {
-            last_evicted.insert(
-                entry.as_ref().unwrap().0.value().0,
-                entry.as_ref().unwrap().1.value(),
-            );
-        });
-        Ok(())
-    }
-
-    pub fn read_first_seen(
-        &self,
-        read_tx: &ReadTransaction,
-        first_seen: &mut BTreeMap<Txid, u64>,
-    ) -> Result<(), BdkRedbError> {
-        let table = read_tx
-            .open_table(self.first_seen_table_defn())
-            .map_err(redb::Error::from)?;
-        table.iter().unwrap().for_each(|entry| {
-            first_seen.insert(
-                entry.as_ref().unwrap().0.value().0,
-                entry.as_ref().unwrap().1.value(),
-            );
-        });
-        Ok(())
-    }
-
-    pub fn read_txs(
-        &self,
-        read_tx: &ReadTransaction,
-        txs: &mut BTreeSet<Arc<Transaction>>,
-    ) -> Result<(), BdkRedbError> {
-        let table = read_tx.open_table(self.txs_table_defn()).unwrap();
-        table.iter().unwrap().for_each(|entry| {
-            txs.insert(Arc::new(entry.unwrap().1.value().0));
-        });
-        Ok(())
-    }
-
-    pub fn read_changeset(&self, changeset: &mut ChangeSet) -> Result<(), BdkRedbError> {
-        let read_tx = self.db.begin_read().unwrap();
-
-        self.read_network(&read_tx, &mut changeset.network)?;
-        let mut desc_changeset: BTreeMap<u64, Option<Descriptor<DescriptorPublicKey>>> =
-            BTreeMap::new();
-        self.read_keychains(&read_tx, &mut desc_changeset)?;
-        if let Some(desc) = desc_changeset.get(&0).unwrap() {
-            changeset.descriptor = Some(desc.clone());
-            if let Some(change_desc) = desc_changeset.get(&1).unwrap() {
-                changeset.change_descriptor = Some(change_desc.clone());
-            }
-        }
-        self.read_local_chain(&read_tx, &mut changeset.local_chain)?;
-        self.read_tx_graph::<ConfirmationBlockTime>(&read_tx, &mut changeset.tx_graph)?;
-        self.read_last_revealed(&read_tx, &mut changeset.indexer.last_revealed)?;
-        self.read_spks(&read_tx, &mut changeset.indexer.spk_cache)?;
-
-        Ok(())
-    }
 }
 
 #[cfg(test)]
@@ -901,7 +630,7 @@ mod test {
     use bdk_wallet::{
         bitcoin::{
             self, Amount, BlockHash, OutPoint, ScriptBuf, Transaction, TxIn, TxOut, absolute,
-            transaction, transaction::Txid,
+            hashes::Hash, transaction, transaction::Txid,
         },
         chain::{DescriptorExt, Merge, keychain_txout, local_chain},
         descriptor::Descriptor,
