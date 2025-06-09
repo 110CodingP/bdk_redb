@@ -6,7 +6,9 @@ use anchor_trait::AnchorWithMetaData;
 use bdk_wallet::ChangeSet;
 use bdk_wallet::bitcoin::{self, Network, OutPoint, Txid};
 use bdk_wallet::bitcoin::{ScriptBuf, Transaction, TxOut};
-use bdk_wallet::chain::{ConfirmationBlockTime, DescriptorId, local_chain, tx_graph};
+use bdk_wallet::chain::{
+    ConfirmationBlockTime, DescriptorId, keychain_txout, local_chain, tx_graph,
+};
 use bdk_wallet::descriptor::{Descriptor, DescriptorPublicKey};
 use error::{BdkRedbError, MissingError};
 use redb::{Database, ReadTransaction, ReadableTable, TableDefinition, WriteTransaction};
@@ -157,8 +159,7 @@ impl Store {
         }
         self.persist_keychains(&write_tx, &desc_changeset)?;
         self.persist_local_chain(&write_tx, &changeset.local_chain)?;
-        self.persist_last_revealed(&write_tx, &changeset.indexer.last_revealed)?;
-        self.persist_spks(&write_tx, &changeset.indexer.spk_cache)?;
+        self.persist_indexer(&write_tx, &changeset.indexer)?;
         write_tx.commit().unwrap();
         self.persist_tx_graph::<ConfirmationBlockTime>(&changeset.tx_graph)?;
         Ok(())
@@ -179,6 +180,17 @@ impl Store {
         self.persist_last_evicted(&write_tx, &read_tx, &changeset.last_evicted)?;
         self.persist_first_seen(&write_tx, &read_tx, &changeset.first_seen)?;
         write_tx.commit().unwrap();
+        Ok(())
+    }
+
+    pub fn persist_indexer(
+        &self,
+        write_tx: &WriteTransaction,
+        changeset: &keychain_txout::ChangeSet,
+    ) -> Result<(), BdkRedbError> {
+        self.persist_last_revealed(write_tx, &changeset.last_revealed)
+            .unwrap();
+        self.persist_spks(write_tx, &changeset.spk_cache).unwrap();
         Ok(())
     }
 
@@ -403,8 +415,7 @@ impl Store {
         }
         self.read_local_chain(&read_tx, &mut changeset.local_chain)?;
         self.read_tx_graph::<ConfirmationBlockTime>(&read_tx, &mut changeset.tx_graph)?;
-        self.read_last_revealed(&read_tx, &mut changeset.indexer.last_revealed)?;
-        self.read_spks(&read_tx, &mut changeset.indexer.spk_cache)?;
+        self.read_indexer(&read_tx, &mut changeset.indexer)?;
 
         Ok(())
     }
@@ -420,6 +431,16 @@ impl Store {
         self.read_last_seen(read_tx, &mut changeset.last_seen)?;
         self.read_last_evicted(read_tx, &mut changeset.last_evicted)?;
         self.read_first_seen(read_tx, &mut changeset.first_seen)?;
+        Ok(())
+    }
+
+    pub fn read_indexer(
+        &self,
+        read_tx: &ReadTransaction,
+        changeset: &mut keychain_txout::ChangeSet,
+    ) -> Result<(), BdkRedbError> {
+        self.read_last_revealed(read_tx, &mut changeset.last_revealed)?;
+        self.read_spks(read_tx, &mut changeset.spk_cache)?;
         Ok(())
     }
 
@@ -1410,6 +1431,57 @@ mod test {
         let mut changeset = keychain_txout::ChangeSet::default();
         let read_tx = store.db.begin_read().unwrap();
         store.read_spks(&read_tx, &mut changeset.spk_cache).unwrap();
+
+        assert_eq!(changeset.spk_cache, keychain_txout_changeset.spk_cache);
+    }
+
+    #[test]
+    fn test_indexer_persistence() {
+        let tmpfile = NamedTempFile::new().unwrap();
+        let store = create_test_store(tmpfile.path(), "wallet1");
+        let secp = bitcoin::secp256k1::Secp256k1::signing_only();
+
+        pub const DESCRIPTORS: [&str; 2] = [
+            "wpkh([73c5da0a/86'/0'/0']xprv9xgqHN7yz9MwCkxsBPN5qetuNdQSUttZNKw1dcYTV4mkaAFiBVGQziHs3NRSWMkCzvgjEe3n9xV8oYywvM8at9yRqyaZVz6TYYhX98VjsUk/1/0)",
+            "tr([73c5da0a/86'/0'/0']xprv9xgqHN7yz9MwCkxsBPN5qetuNdQSUttZNKw1dcYTV4mkaAFiBVGQziHs3NRSWMkCzvgjEe3n9xV8oYywvM8at9yRqyaZVz6TYYhX98VjsUk/0/*)",
+        ];
+
+        let descriptor_ids = DESCRIPTORS.map(|d| {
+            Descriptor::<DescriptorPublicKey>::parse_descriptor(&secp, d)
+                .unwrap()
+                .0
+                .descriptor_id()
+        });
+
+        let keychain_txout_changeset = keychain_txout::ChangeSet {
+            last_revealed: [(descriptor_ids[0], 1), (descriptor_ids[1], 100)].into(),
+            spk_cache: [
+                (
+                    descriptor_ids[0],
+                    [(0u32, ScriptBuf::from_bytes(vec![1, 2, 3]))].into(),
+                ),
+                (
+                    descriptor_ids[1],
+                    [
+                        (100u32, ScriptBuf::from_bytes(vec![3])),
+                        (1000u32, ScriptBuf::from_bytes(vec![5, 6, 8])),
+                    ]
+                    .into(),
+                ),
+            ]
+            .into(),
+        };
+
+        let write_tx = store.db.begin_write().unwrap();
+        let _ = write_tx.open_table(store.spk_table_defn()).unwrap();
+        store
+            .persist_indexer(&write_tx, &keychain_txout_changeset)
+            .unwrap();
+        write_tx.commit().unwrap();
+
+        let mut changeset = keychain_txout::ChangeSet::default();
+        let read_tx = store.db.begin_read().unwrap();
+        store.read_indexer(&read_tx, &mut changeset).unwrap();
 
         assert_eq!(changeset, keychain_txout_changeset);
     }
