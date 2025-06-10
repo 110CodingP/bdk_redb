@@ -676,22 +676,19 @@ mod test {
         let store = create_test_store(tmpfile.path(), "wallet1");
         let write_tx = store.db.begin_write().unwrap();
         let _ = write_tx.open_table(NETWORK).unwrap();
-        let changeset = ChangeSet {
-            network: Some(Network::Bitcoin),
-            ..Default::default()
-        };
+        let network_changeset = Some(Network::Bitcoin);
         store
-            .persist_network(&write_tx, &changeset.network)
+            .persist_network(&write_tx, &network_changeset)
             .unwrap();
         write_tx.commit().unwrap();
 
         let read_tx = store.db.begin_read().unwrap();
-        let mut changeset = ChangeSet::default();
+        let mut network_changeset = Some(Network::Regtest);
         store
-            .read_network(&read_tx, &mut changeset.network)
+            .read_network(&read_tx, &mut network_changeset)
             .unwrap();
 
-        assert_eq!(changeset.network, Some(Network::Bitcoin));
+        assert_eq!(network_changeset, Some(Network::Bitcoin));
     }
 
     #[test]
