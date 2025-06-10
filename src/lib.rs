@@ -5,7 +5,7 @@ mod wrapper;
 use anchor_trait::AnchorWithMetaData;
 use bdk_wallet::ChangeSet;
 use bdk_wallet::bitcoin::{self, Network, OutPoint, Txid};
-use bdk_wallet::bitcoin::{ScriptBuf, Transaction, TxOut};
+use bdk_wallet::bitcoin::{BlockHash, ScriptBuf, Transaction, TxOut};
 use bdk_wallet::chain::{
     ConfirmationBlockTime, DescriptorId, keychain_txout, local_chain, tx_graph,
 };
@@ -235,10 +235,19 @@ impl Store {
         write_tx: &WriteTransaction,
         changeset: &local_chain::ChangeSet,
     ) -> Result<(), BdkRedbError> {
+        self.persist_blocks(write_tx, &changeset.blocks).unwrap();
+        Ok(())
+    }
+
+    pub fn persist_blocks(
+        &self,
+        write_tx: &WriteTransaction,
+        blocks: &BTreeMap<u32, Option<BlockHash>>,
+    ) -> Result<(), BdkRedbError> {
         let mut table = write_tx
             .open_table(self.local_chain_table_defn())
             .map_err(redb::Error::from)?;
-        for (ht, hash) in &changeset.blocks {
+        for (ht, hash) in blocks {
             match hash {
                 Some(hash) => table.insert(*ht, BlockHashWrapper(*hash)).unwrap(),
                 None => table.remove(*ht).unwrap(),
@@ -488,13 +497,22 @@ impl Store {
         read_tx: &ReadTransaction,
         changeset: &mut local_chain::ChangeSet,
     ) -> Result<(), BdkRedbError> {
+        self.read_blocks(read_tx, &mut changeset.blocks).unwrap();
+        Ok(())
+    }
+
+    pub fn read_blocks(
+        &self,
+        read_tx: &ReadTransaction,
+        blocks: &mut BTreeMap<u32, Option<BlockHash>>,
+    ) -> Result<(), BdkRedbError> {
         let table = read_tx
             .open_table(self.local_chain_table_defn())
             .map_err(redb::Error::from)
             .unwrap();
 
         table.iter().unwrap().for_each(|entry| {
-            changeset.blocks.insert(
+            blocks.insert(
                 entry.as_ref().unwrap().0.value(),
                 Some(entry.as_ref().unwrap().1.value().0),
             );
@@ -815,6 +833,41 @@ mod test {
         let local_chain_changeset = local_chain::ChangeSet { blocks };
 
         assert_eq!(local_chain_changeset, changeset.local_chain);
+    }
+
+    #[test]
+    fn test_blocks_persistence() {
+        let tmpfile = NamedTempFile::new().unwrap();
+        let store = create_test_store(tmpfile.path(), "wallet1");
+        let mut blocks: BTreeMap<u32, Option<BlockHash>> = BTreeMap::new();
+        blocks.insert(0u32, Some(hash!("B")));
+        blocks.insert(1u32, Some(hash!("D")));
+        blocks.insert(2u32, Some(hash!("K")));
+
+        let write_tx = store.db.begin_write().unwrap();
+        let _ = write_tx.open_table(store.local_chain_table_defn()).unwrap();
+        store.persist_blocks(&write_tx, &blocks).unwrap();
+        write_tx.commit().unwrap();
+        let read_tx = store.db.begin_read().unwrap();
+        let mut blocks_new: BTreeMap<u32, Option<BlockHash>> = BTreeMap::new();
+        store.read_blocks(&read_tx, &mut blocks_new).unwrap();
+        assert_eq!(blocks_new, blocks);
+
+        let mut blocks: BTreeMap<u32, Option<BlockHash>> = BTreeMap::new();
+        blocks.insert(2u32, None);
+
+        let write_tx = store.db.begin_write().unwrap();
+        store.persist_blocks(&write_tx, &blocks).unwrap();
+        write_tx.commit().unwrap();
+        let read_tx = store.db.begin_read().unwrap();
+        let mut blocks_new: BTreeMap<u32, Option<BlockHash>> = BTreeMap::new();
+        store.read_blocks(&read_tx, &mut blocks_new).unwrap();
+
+        let mut blocks: BTreeMap<u32, Option<BlockHash>> = BTreeMap::new();
+        blocks.insert(0u32, Some(hash!("B")));
+        blocks.insert(1u32, Some(hash!("D")));
+
+        assert_eq!(blocks, blocks_new);
     }
 
     #[test]
