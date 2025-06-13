@@ -795,6 +795,8 @@ mod test {
     fn test_local_chain_persistence() {
         let tmpfile = NamedTempFile::new().unwrap();
         let store = create_test_store(tmpfile.path(), "wallet1");
+
+        // create a local_chain_changeset, persist that and read it
         let mut blocks: BTreeMap<u32, Option<BlockHash>> = BTreeMap::new();
         blocks.insert(0u32, Some(hash!("B")));
         blocks.insert(1u32, Some(hash!("D")));
@@ -812,6 +814,7 @@ mod test {
         store.read_local_chain(&read_tx, &mut changeset).unwrap();
         assert_eq!(local_chain_changeset, changeset);
 
+        // create another local_chain_changeset, persist that and read it
         let mut blocks: BTreeMap<u32, Option<BlockHash>> = BTreeMap::new();
         blocks.insert(2u32, None);
         let local_chain_changeset = local_chain::ChangeSet { blocks };
@@ -822,9 +825,9 @@ mod test {
             .unwrap();
         write_tx.commit().unwrap();
         let read_tx = store.db.begin_read().unwrap();
-        let mut changeset = ChangeSet::default();
+        let mut changeset = local_chain::ChangeSet::default();
         store
-            .read_local_chain(&read_tx, &mut changeset.local_chain)
+            .read_local_chain(&read_tx, &mut changeset)
             .unwrap();
 
         let mut blocks: BTreeMap<u32, Option<BlockHash>> = BTreeMap::new();
@@ -832,7 +835,7 @@ mod test {
         blocks.insert(1u32, Some(hash!("D")));
         let local_chain_changeset = local_chain::ChangeSet { blocks };
 
-        assert_eq!(local_chain_changeset, changeset.local_chain);
+        assert_eq!(local_chain_changeset, changeset);
     }
 
     #[test]
