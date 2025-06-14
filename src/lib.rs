@@ -1004,38 +1004,73 @@ mod test {
             }],
         };
 
-        let tx_graph_changeset1 = tx_graph::ChangeSet::<ConfirmationBlockTime> {
-            txs: [Arc::new(tx1.clone()), Arc::new(tx2.clone())].into(),
-            txouts: [].into(),
-            anchors: [].into(),
-            last_seen: [].into(),
-            first_seen: [].into(),
-            last_evicted: [(tx1.compute_txid(), 100), (tx2.compute_txid(), 120)].into(),
-        };
+        let txs: BTreeSet<Arc<Transaction>> = [Arc::new(tx1.clone()), Arc::new(tx2.clone())].into();
+        let mut last_evicted: BTreeMap<Txid, u64> =
+            [(tx1.compute_txid(), 100), (tx2.compute_txid(), 120)].into();
 
         let write_tx = store.db.begin_write().unwrap();
         let _ = write_tx.open_table(store.txs_table_defn()).unwrap();
         let _ = write_tx
             .open_table(store.last_evicted_table_defn())
             .unwrap();
-        store
-            .persist_txs(&write_tx, &tx_graph_changeset1.txs)
-            .unwrap();
+        store.persist_txs(&write_tx, &txs).unwrap();
         write_tx.commit().unwrap();
 
         let write_tx = store.db.begin_write().unwrap();
         let read_tx = store.db.begin_read().unwrap();
         store
-            .persist_last_evicted(&write_tx, &read_tx, &tx_graph_changeset1.last_evicted)
+            .persist_last_evicted(&write_tx, &read_tx, &last_evicted)
             .unwrap();
         write_tx.commit().unwrap();
 
         let read_tx = store.db.begin_read().unwrap();
-        let mut changeset = tx_graph::ChangeSet::<ConfirmationBlockTime>::default();
+        let mut last_evicted_read: BTreeMap<Txid, u64> = BTreeMap::new();
         store
-            .read_last_evicted(&read_tx, &mut changeset.last_evicted)
+            .read_last_evicted(&read_tx, &mut last_evicted_read)
             .unwrap();
-        assert_eq!(changeset.last_evicted, tx_graph_changeset1.last_evicted);
+        assert_eq!(last_evicted_read, last_evicted);
+
+        let tx3 = Transaction {
+            version: transaction::Version::TWO,
+            lock_time: absolute::LockTime::ZERO,
+            input: vec![TxIn {
+                previous_output: OutPoint {
+                    txid: tx2.compute_txid(),
+                    vout: 0,
+                },
+                ..Default::default()
+            }],
+            output: vec![TxOut {
+                value: Amount::from_sat(19_000),
+                script_pubkey: ScriptBuf::new(),
+            }],
+        };
+
+        let txs_new: BTreeSet<Arc<Transaction>> = [Arc::new(tx3.clone())].into();
+        let last_evicted_new: BTreeMap<Txid, u64> = [(tx3.compute_txid(), 300)].into();
+
+        let write_tx = store.db.begin_write().unwrap();
+        let _ = write_tx.open_table(store.txs_table_defn()).unwrap();
+        let _ = write_tx
+            .open_table(store.last_evicted_table_defn())
+            .unwrap();
+        store.persist_txs(&write_tx, &txs_new).unwrap();
+        write_tx.commit().unwrap();
+
+        let write_tx = store.db.begin_write().unwrap();
+        let read_tx = store.db.begin_read().unwrap();
+        store
+            .persist_last_evicted(&write_tx, &read_tx, &last_evicted_new)
+            .unwrap();
+        write_tx.commit().unwrap();
+
+        let read_tx = store.db.begin_read().unwrap();
+        let mut last_evicted_read_new: BTreeMap<Txid, u64> = BTreeMap::new();
+        store
+            .read_last_evicted(&read_tx, &mut last_evicted_read_new)
+            .unwrap();
+        last_evicted.extend(last_evicted_new);
+        assert_eq!(last_evicted_read_new, last_evicted);
     }
 
     #[test]
