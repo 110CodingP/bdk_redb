@@ -905,8 +905,9 @@ mod test {
             }],
         };
 
+        // try persisting and reading last_seen
         let txs: BTreeSet<Arc<Transaction>> = [Arc::new(tx1.clone()), Arc::new(tx2.clone())].into();
-        let last_seen: BTreeMap<Txid, u64> =
+        let mut last_seen: BTreeMap<Txid, u64> =
             [(tx1.compute_txid(), 100), (tx2.compute_txid(), 120)].into();
 
         let write_tx = store.db.begin_write().unwrap();
@@ -926,6 +927,47 @@ mod test {
         let mut last_seen_read: BTreeMap<Txid, u64> = BTreeMap::new();
         store.read_last_seen(&read_tx, &mut last_seen_read).unwrap();
         assert_eq!(last_seen_read, last_seen);
+
+        let tx3 = Transaction {
+            version: transaction::Version::TWO,
+            lock_time: absolute::LockTime::ZERO,
+            input: vec![TxIn {
+                previous_output: OutPoint {
+                    txid: tx2.compute_txid(),
+                    vout: 0,
+                },
+                ..Default::default()
+            }],
+            output: vec![TxOut {
+                value: Amount::from_sat(19_000),
+                script_pubkey: ScriptBuf::new(),
+            }],
+        };
+
+        // persist another last_seen and see if what is read is same as merged one
+        let txs_new: BTreeSet<Arc<Transaction>> = [Arc::new(tx3.clone())].into();
+        let last_seen_new: BTreeMap<Txid, u64> = [(tx3.compute_txid(), 200)].into();
+
+        let write_tx = store.db.begin_write().unwrap();
+        let _ = write_tx.open_table(store.txs_table_defn()).unwrap();
+        let _ = write_tx.open_table(store.last_seen_defn()).unwrap();
+        store.persist_txs(&write_tx, &txs_new).unwrap();
+        write_tx.commit().unwrap();
+
+        let write_tx = store.db.begin_write().unwrap();
+        let read_tx = store.db.begin_read().unwrap();
+        store
+            .persist_last_seen(&write_tx, &read_tx, &last_seen_new)
+            .unwrap();
+        write_tx.commit().unwrap();
+
+        let read_tx = store.db.begin_read().unwrap();
+        let mut last_seen_read_new: BTreeMap<Txid, u64> = BTreeMap::new();
+        store
+            .read_last_seen(&read_tx, &mut last_seen_read_new)
+            .unwrap();
+        last_seen.merge(last_seen_new);
+        assert_eq!(last_seen_read_new, last_seen);
     }
 
     #[test]
