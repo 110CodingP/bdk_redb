@@ -826,9 +826,7 @@ mod test {
         write_tx.commit().unwrap();
         let read_tx = store.db.begin_read().unwrap();
         let mut changeset = local_chain::ChangeSet::default();
-        store
-            .read_local_chain(&read_tx, &mut changeset)
-            .unwrap();
+        store.read_local_chain(&read_tx, &mut changeset).unwrap();
 
         let mut blocks: BTreeMap<u32, Option<BlockHash>> = BTreeMap::new();
         blocks.insert(0u32, Some(hash!("B")));
@@ -907,36 +905,27 @@ mod test {
             }],
         };
 
-        let tx_graph_changeset1 = tx_graph::ChangeSet::<ConfirmationBlockTime> {
-            txs: [Arc::new(tx1.clone()), Arc::new(tx2.clone())].into(),
-            txouts: [].into(),
-            anchors: [].into(),
-            last_seen: [(tx1.compute_txid(), 100), (tx2.compute_txid(), 120)].into(),
-            first_seen: [(tx1.compute_txid(), 100), (tx2.compute_txid(), 120)].into(),
-            last_evicted: [].into(),
-        };
+        let txs: BTreeSet<Arc<Transaction>> = [Arc::new(tx1.clone()), Arc::new(tx2.clone())].into();
+        let last_seen: BTreeMap<Txid, u64> =
+            [(tx1.compute_txid(), 100), (tx2.compute_txid(), 120)].into();
 
         let write_tx = store.db.begin_write().unwrap();
         let _ = write_tx.open_table(store.txs_table_defn()).unwrap();
         let _ = write_tx.open_table(store.last_seen_defn()).unwrap();
-        store
-            .persist_txs(&write_tx, &tx_graph_changeset1.txs)
-            .unwrap();
+        store.persist_txs(&write_tx, &txs).unwrap();
         write_tx.commit().unwrap();
 
         let write_tx = store.db.begin_write().unwrap();
         let read_tx = store.db.begin_read().unwrap();
         store
-            .persist_last_seen(&write_tx, &read_tx, &tx_graph_changeset1.last_seen)
+            .persist_last_seen(&write_tx, &read_tx, &last_seen)
             .unwrap();
         write_tx.commit().unwrap();
 
         let read_tx = store.db.begin_read().unwrap();
-        let mut changeset = tx_graph::ChangeSet::<ConfirmationBlockTime>::default();
-        store
-            .read_last_seen(&read_tx, &mut changeset.last_seen)
-            .unwrap();
-        assert_eq!(changeset.last_seen, tx_graph_changeset1.last_seen);
+        let mut last_seen_read: BTreeMap<Txid, u64> = BTreeMap::new();
+        store.read_last_seen(&read_tx, &mut last_seen_read).unwrap();
+        assert_eq!(last_seen_read, last_seen);
     }
 
     #[test]
