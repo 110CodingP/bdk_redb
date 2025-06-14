@@ -680,8 +680,8 @@ mod test {
     use tempfile::NamedTempFile;
 
     const DESCRIPTORS: [&str; 2] = [
-        "tr([73c5da0a/86'/0'/0']xprv9xgqHN7yz9MwCkxsBPN5qetuNdQSUttZNKw1dcYTV4mkaAFiBVGQziHs3NRSWMkCzvgjEe3n9xV8oYywvM8at9yRqyaZVz6TYYhX98VjsUk/0/*)",
-        "wpkh([73c5da0a/86'/0'/0']xprv9xgqHN7yz9MwCkxsBPN5qetuNdQSUttZNKw1dcYTV4mkaAFiBVGQziHs3NRSWMkCzvgjEe3n9xV8oYywvM8at9yRqyaZVz6TYYhX98VjsUk/1/0)",
+        "tr([5940b9b9/86'/0'/0']tpubDDVNqmq75GNPWQ9UNKfP43UwjaHU4GYfoPavojQbfpyfZp2KetWgjGBRRAy4tYCrAA6SB11mhQAkqxjh1VtQHyKwT4oYxpwLaGHvoKmtxZf/0/*)#44aqnlam",
+        "tr([5940b9b9/86'/0'/0']tpubDDVNqmq75GNPWQ9UNKfP43UwjaHU4GYfoPavojQbfpyfZp2KetWgjGBRRAy4tYCrAA6SB11mhQAkqxjh1VtQHyKwT4oYxpwLaGHvoKmtxZf/1/*)#ypcpw2dr",
     ];
 
     macro_rules! hash {
@@ -1323,9 +1323,9 @@ mod test {
             txs: [Arc::new(tx2.clone())].into(),
             txouts: [].into(),
             anchors: [(conf_anchor, tx2.compute_txid())].into(),
-            last_seen: [].into(),
-            first_seen: [].into(),
-            last_evicted: [].into(),
+            last_seen: [(tx2.clone().compute_txid(), 200)].into(),
+            first_seen: [(tx2.clone().compute_txid(), 100)].into(),
+            last_evicted: [(tx2.clone().compute_txid(), 150)].into(),
         };
 
         store.persist_tx_graph(&tx_graph_changeset2).unwrap();
