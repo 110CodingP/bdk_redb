@@ -1183,7 +1183,7 @@ mod test {
         let tmpfile = NamedTempFile::new().unwrap();
         let store = create_test_store(tmpfile, "wallet_1");
 
-       let (tx1, tx2, _) = create_txns();
+        let (tx1, tx2, tx3) = create_txns();
 
         let anchor1 = ConfirmationBlockTime {
             block_id: BlockId {
@@ -1201,68 +1201,68 @@ mod test {
             confirmation_time: 1756839600,
         };
 
-        let tx_graph_changeset1 = tx_graph::ChangeSet::<ConfirmationBlockTime> {
-            txs: [Arc::new(tx1.clone()), Arc::new(tx2.clone())].into(),
-            txouts: [].into(),
-            anchors: [(anchor1, tx1.compute_txid()), (anchor2, tx2.compute_txid())].into(),
-            last_seen: [].into(),
-            first_seen: [].into(),
-            last_evicted: [].into(),
-        };
+        let txs: BTreeSet<Arc<Transaction>> = [Arc::new(tx1.clone()), Arc::new(tx2.clone())].into();
+        let mut anchors = [(anchor1, tx1.compute_txid()), (anchor2, tx2.compute_txid())].into();
 
         let write_tx = store.db.begin_write().unwrap();
+        let _ = write_tx.open_table(store.txs_table_defn()).unwrap();
         let _ = write_tx
             .open_table(store.anchors_table_defn::<ConfirmationBlockTime>())
             .unwrap();
-        store
-            .persist_txs(&write_tx, &tx_graph_changeset1.txs)
-            .unwrap();
+        store.persist_txs(&write_tx, &txs).unwrap();
         write_tx.commit().unwrap();
 
         let write_tx = store.db.begin_write().unwrap();
         let read_tx = store.db.begin_read().unwrap();
         store
-            .persist_anchors(&write_tx, &read_tx, &tx_graph_changeset1.anchors)
+            .persist_anchors(&write_tx, &read_tx, &anchors)
             .unwrap();
         read_tx.close().unwrap();
         write_tx.commit().unwrap();
 
         let read_tx = store.db.begin_read().unwrap();
-        let mut changeset = tx_graph::ChangeSet::<ConfirmationBlockTime>::default();
-        store
-            .read_anchors(&read_tx, &mut changeset.anchors)
-            .unwrap();
-        assert_eq!(changeset.anchors, tx_graph_changeset1.anchors);
+        let mut anchors_read: BTreeSet<(ConfirmationBlockTime, Txid)> = BTreeSet::new();
+        store.read_anchors(&read_tx, &mut anchors_read).unwrap();
+        assert_eq!(anchors_read, anchors);
 
-        let tx_graph_changeset2 = tx_graph::ChangeSet::<ConfirmationBlockTime> {
-            txs: [].into(),
-            txouts: [].into(),
-            anchors: [(anchor1, Txid::from_byte_array([3; 32]))].into(),
-            last_seen: [].into(),
-            first_seen: [].into(),
-            last_evicted: [].into(),
-        };
-
-        let write_tx = store.db.begin_write().unwrap();
-        store
-            .persist_txs(&write_tx, &tx_graph_changeset2.txs)
-            .unwrap();
-        write_tx.commit().unwrap();
+        let anchors_new: BTreeSet<(ConfirmationBlockTime, Txid)> =
+            [(anchor1, Txid::from_byte_array([3; 32]))].into();
 
         let write_tx = store.db.begin_write().unwrap();
         let read_tx = store.db.begin_read().unwrap();
         store
-            .persist_anchors(&write_tx, &read_tx, &tx_graph_changeset2.anchors)
+            .persist_anchors(&write_tx, &read_tx, &anchors_new)
             .unwrap();
         read_tx.close().unwrap();
         write_tx.commit().unwrap();
 
         let read_tx = store.db.begin_read().unwrap();
-        let mut changeset = tx_graph::ChangeSet::<ConfirmationBlockTime>::default();
+        let mut anchors_read_new: BTreeSet<(ConfirmationBlockTime, Txid)> = BTreeSet::new();
+        store.read_anchors(&read_tx, &mut anchors_read_new).unwrap();
+        assert_eq!(anchors_read_new, anchors);
+
+        let txs_new: BTreeSet<Arc<Transaction>> = [Arc::new(tx3.clone())].into();
+        let anchors_new: BTreeSet<(ConfirmationBlockTime, Txid)> =
+            [(anchor2, tx3.compute_txid())].into();
+
+        let write_tx = store.db.begin_write().unwrap();
+        store.persist_txs(&write_tx, &txs_new).unwrap();
+        write_tx.commit().unwrap();
+
+        let write_tx = store.db.begin_write().unwrap();
+        let read_tx = store.db.begin_read().unwrap();
         store
-            .read_anchors(&read_tx, &mut changeset.anchors)
+            .persist_anchors(&write_tx, &read_tx, &anchors_new)
             .unwrap();
-        assert_eq!(changeset.anchors, tx_graph_changeset1.anchors);
+        read_tx.close().unwrap();
+        write_tx.commit().unwrap();
+
+        let read_tx = store.db.begin_read().unwrap();
+        let mut anchors_read_new: BTreeSet<(ConfirmationBlockTime, Txid)> = BTreeSet::new();
+        store.read_anchors(&read_tx, &mut anchors_read_new).unwrap();
+
+        anchors.merge(anchors_new);
+        assert_eq!(anchors_read_new, anchors);
     }
 
     #[test]
