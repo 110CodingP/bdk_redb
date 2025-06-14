@@ -1072,36 +1072,69 @@ mod test {
             }],
         };
 
-        let tx_graph_changeset1 = tx_graph::ChangeSet::<ConfirmationBlockTime> {
-            txs: [Arc::new(tx1.clone()), Arc::new(tx2.clone())].into(),
-            txouts: [].into(),
-            anchors: [].into(),
-            last_seen: [(tx1.compute_txid(), 100), (tx2.compute_txid(), 240)].into(),
-            first_seen: [(tx1.compute_txid(), 100), (tx2.compute_txid(), 120)].into(),
-            last_evicted: [].into(),
-        };
+        let txs: BTreeSet<Arc<Transaction>> = [Arc::new(tx1.clone()), Arc::new(tx2.clone())].into();
+        let mut first_seen: BTreeMap<Txid, u64> =
+            [(tx1.compute_txid(), 100), (tx2.compute_txid(), 120)].into();
 
         let write_tx = store.db.begin_write().unwrap();
         let _ = write_tx.open_table(store.txs_table_defn()).unwrap();
         let _ = write_tx.open_table(store.first_seen_table_defn()).unwrap();
-        store
-            .persist_txs(&write_tx, &tx_graph_changeset1.txs)
-            .unwrap();
+        store.persist_txs(&write_tx, &txs).unwrap();
         write_tx.commit().unwrap();
 
         let write_tx = store.db.begin_write().unwrap();
         let read_tx = store.db.begin_read().unwrap();
         store
-            .persist_first_seen(&write_tx, &read_tx, &tx_graph_changeset1.first_seen)
+            .persist_first_seen(&write_tx, &read_tx, &first_seen)
             .unwrap();
         write_tx.commit().unwrap();
 
         let read_tx = store.db.begin_read().unwrap();
-        let mut changeset = tx_graph::ChangeSet::<ConfirmationBlockTime>::default();
+        let mut first_seen_read: BTreeMap<Txid, u64> = BTreeMap::new();
         store
-            .read_first_seen(&read_tx, &mut changeset.first_seen)
+            .read_first_seen(&read_tx, &mut first_seen_read)
             .unwrap();
-        assert_eq!(changeset.first_seen, tx_graph_changeset1.first_seen);
+        assert_eq!(first_seen_read, first_seen);
+
+        let tx3 = Transaction {
+            version: transaction::Version::TWO,
+            lock_time: absolute::LockTime::ZERO,
+            input: vec![TxIn {
+                previous_output: OutPoint {
+                    txid: tx2.compute_txid(),
+                    vout: 0,
+                },
+                ..Default::default()
+            }],
+            output: vec![TxOut {
+                value: Amount::from_sat(19_000),
+                script_pubkey: ScriptBuf::new(),
+            }],
+        };
+
+        let txs_new: BTreeSet<Arc<Transaction>> = [Arc::new(tx3.clone())].into();
+        let first_seen_new: BTreeMap<Txid, u64> = [(tx3.compute_txid(), 200)].into();
+
+        let write_tx = store.db.begin_write().unwrap();
+        let _ = write_tx.open_table(store.txs_table_defn()).unwrap();
+        let _ = write_tx.open_table(store.first_seen_table_defn()).unwrap();
+        store.persist_txs(&write_tx, &txs_new).unwrap();
+        write_tx.commit().unwrap();
+
+        let write_tx = store.db.begin_write().unwrap();
+        let read_tx = store.db.begin_read().unwrap();
+        store
+            .persist_first_seen(&write_tx, &read_tx, &first_seen_new)
+            .unwrap();
+        write_tx.commit().unwrap();
+
+        let read_tx = store.db.begin_read().unwrap();
+        let mut first_seen_read_new: BTreeMap<Txid, u64> = BTreeMap::new();
+        store
+            .read_first_seen(&read_tx, &mut first_seen_read_new)
+            .unwrap();
+        first_seen.extend(first_seen_new);
+        assert_eq!(first_seen_read_new, first_seen);
     }
 
     #[test]
