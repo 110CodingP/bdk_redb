@@ -1254,26 +1254,46 @@ mod test {
             }],
         };
 
-        let tx_graph_changeset1 = tx_graph::ChangeSet::<ConfirmationBlockTime> {
-            txs: [Arc::new(tx1), Arc::new(tx2)].into(),
-            txouts: [].into(),
-            anchors: [].into(),
-            last_seen: [].into(),
-            first_seen: [].into(),
-            last_evicted: [].into(),
-        };
+        let mut txs: BTreeSet<Arc<Transaction>> = [Arc::new(tx1), Arc::new(tx2.clone())].into();
 
         let write_tx = store.db.begin_write().unwrap();
         let _ = write_tx.open_table(store.txs_table_defn()).unwrap();
-        store
-            .persist_txs(&write_tx, &tx_graph_changeset1.txs)
-            .unwrap();
+        store.persist_txs(&write_tx, &txs).unwrap();
         write_tx.commit().unwrap();
 
         let read_tx = store.db.begin_read().unwrap();
-        let mut changeset = tx_graph::ChangeSet::<ConfirmationBlockTime>::default();
-        store.read_txs(&read_tx, &mut changeset.txs).unwrap();
-        assert_eq!(changeset.txs, tx_graph_changeset1.txs);
+        let mut txs_read: BTreeSet<Arc<Transaction>> = BTreeSet::new();
+        store.read_txs(&read_tx, &mut txs_read).unwrap();
+        assert_eq!(txs_read, txs);
+
+        let tx3 = Transaction {
+            version: transaction::Version::TWO,
+            lock_time: absolute::LockTime::ZERO,
+            input: vec![TxIn {
+                previous_output: OutPoint {
+                    txid: tx2.compute_txid(),
+                    vout: 0,
+                },
+                ..Default::default()
+            }],
+            output: vec![TxOut {
+                value: Amount::from_sat(19_000),
+                script_pubkey: ScriptBuf::new(),
+            }],
+        };
+
+        let txs_new: BTreeSet<Arc<Transaction>> = [Arc::new(tx3)].into();
+        let write_tx = store.db.begin_write().unwrap();
+        let _ = write_tx.open_table(store.txs_table_defn()).unwrap();
+        store.persist_txs(&write_tx, &txs_new).unwrap();
+        write_tx.commit().unwrap();
+
+        let read_tx = store.db.begin_read().unwrap();
+        let mut txs_read_new: BTreeSet<Arc<Transaction>> = BTreeSet::new();
+        store.read_txs(&read_tx, &mut txs_read_new).unwrap();
+
+        txs.merge(txs_new);
+        assert_eq!(txs_read_new, txs);
     }
 
     #[test]
