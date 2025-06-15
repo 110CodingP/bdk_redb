@@ -204,12 +204,11 @@ impl Store {
         let write_tx = self.db.begin_write().unwrap();
 
         self.persist_network(&write_tx, &changeset.network)?;
-        let mut desc_changeset: BTreeMap<u64, Option<Descriptor<DescriptorPublicKey>>> =
-            BTreeMap::new();
+        let mut desc_changeset: BTreeMap<u64, Descriptor<DescriptorPublicKey>> = BTreeMap::new();
         if let Some(desc) = &changeset.descriptor {
-            desc_changeset.insert(0, Some(desc.clone()));
+            desc_changeset.insert(0, desc.clone());
             if let Some(change_desc) = &changeset.change_descriptor {
-                desc_changeset.insert(1, Some(change_desc.clone()));
+                desc_changeset.insert(1, change_desc.clone());
             }
         }
         self.persist_keychains(&write_tx, &desc_changeset)?;
@@ -260,17 +259,15 @@ impl Store {
         // maps label to descriptor, we remove desc corresponding to label mapping to None.
         // can't really see how we can remove desc considering TxGraph is monotone
         // but do other wallets allow this?
-        changeset: &BTreeMap<u64, Option<Descriptor<DescriptorPublicKey>>>,
+        changeset: &BTreeMap<u64, Descriptor<DescriptorPublicKey>>,
     ) -> Result<(), BdkRedbError> {
         let mut table = write_tx
             .open_table(self.keychains_table_defn())
             .map_err(redb::Error::from)?;
 
+        // assuming descriptors corresponding to a label(keychain) are never modified.
         for (label, desc) in changeset {
-            let _ = match desc {
-                Some(desc) => table.insert(label, desc.to_string()),
-                None => table.remove(label),
-            };
+            table.insert(label, desc.to_string()).unwrap();
         }
         Ok(())
     }
@@ -495,12 +492,11 @@ impl Store {
         let read_tx = self.db.begin_read().unwrap();
 
         self.read_network(&read_tx, &mut changeset.network)?;
-        let mut desc_changeset: BTreeMap<u64, Option<Descriptor<DescriptorPublicKey>>> =
-            BTreeMap::new();
+        let mut desc_changeset: BTreeMap<u64, Descriptor<DescriptorPublicKey>> = BTreeMap::new();
         self.read_keychains(&read_tx, &mut desc_changeset)?;
-        if let Some(desc) = desc_changeset.get(&0).unwrap() {
+        if let Some(desc) = desc_changeset.get(&0) {
             changeset.descriptor = Some(desc.clone());
-            if let Some(change_desc) = desc_changeset.get(&1).unwrap() {
+            if let Some(change_desc) = desc_changeset.get(&1) {
                 changeset.change_descriptor = Some(change_desc.clone());
             }
         }
@@ -543,7 +539,7 @@ impl Store {
     pub fn read_keychains(
         &self,
         read_tx: &ReadTransaction,
-        desc_changeset: &mut BTreeMap<u64, Option<Descriptor<DescriptorPublicKey>>>,
+        desc_changeset: &mut BTreeMap<u64, Descriptor<DescriptorPublicKey>>,
     ) -> Result<(), BdkRedbError> {
         let table = read_tx
             .open_table(self.keychains_table_defn())
@@ -552,10 +548,8 @@ impl Store {
         table.iter().unwrap().for_each(|entry| {
             desc_changeset.insert(
                 entry.as_ref().unwrap().0.value(),
-                Some(
-                    Descriptor::<DescriptorPublicKey>::from_str(entry.unwrap().1.value().as_str())
-                        .unwrap(),
-                ),
+                Descriptor::<DescriptorPublicKey>::from_str(entry.unwrap().1.value().as_str())
+                    .unwrap(),
             );
         });
 
@@ -823,22 +817,18 @@ mod test {
         let descriptor: Descriptor<DescriptorPublicKey> = "tr([5940b9b9/86'/0'/0']tpubDDVNqmq75GNPWQ9UNKfP43UwjaHU4GYfoPavojQbfpyfZp2KetWgjGBRRAy4tYCrAA6SB11mhQAkqxjh1VtQHyKwT4oYxpwLaGHvoKmtxZf/0/*)#44aqnlam".parse().unwrap();
         let change_descriptor: Descriptor<DescriptorPublicKey> = "tr([5940b9b9/86'/0'/0']tpubDDVNqmq75GNPWQ9UNKfP43UwjaHU4GYfoPavojQbfpyfZp2KetWgjGBRRAy4tYCrAA6SB11mhQAkqxjh1VtQHyKwT4oYxpwLaGHvoKmtxZf/1/*)#ypcpw2dr".parse().unwrap();
 
-        let desc_changeset: BTreeMap<u64, Option<Descriptor<DescriptorPublicKey>>> = [
-            (0, Some(descriptor.clone())),
-            (1, Some(change_descriptor.clone())),
-        ]
-        .into();
+        let desc_changeset: BTreeMap<u64, Descriptor<DescriptorPublicKey>> =
+            [(0, descriptor.clone()), (1, change_descriptor.clone())].into();
 
         store.persist_keychains(&write_tx, &desc_changeset).unwrap();
         write_tx.commit().unwrap();
 
         let read_tx = store.db.begin_read().unwrap();
-        let mut desc_changeset: BTreeMap<u64, Option<Descriptor<DescriptorPublicKey>>> =
-            BTreeMap::new();
+        let mut desc_changeset: BTreeMap<u64, Descriptor<DescriptorPublicKey>> = BTreeMap::new();
         store.read_keychains(&read_tx, &mut desc_changeset).unwrap();
 
-        assert_eq!(*desc_changeset.get(&0).unwrap(), Some(descriptor));
-        assert_eq!(*desc_changeset.get(&1).unwrap(), Some(change_descriptor));
+        assert_eq!(*desc_changeset.get(&0).unwrap(), descriptor);
+        assert_eq!(*desc_changeset.get(&1).unwrap(), change_descriptor);
     }
 
     #[test]
@@ -851,22 +841,18 @@ mod test {
         let descriptor: Descriptor<DescriptorPublicKey> = "tr([5940b9b9/86'/0'/0']tpubDDVNqmq75GNPWQ9UNKfP43UwjaHU4GYfoPavojQbfpyfZp2KetWgjGBRRAy4tYCrAA6SB11mhQAkqxjh1VtQHyKwT4oYxpwLaGHvoKmtxZf/1/*)#ypcpw2dr".parse().unwrap();
         let change_descriptor: Descriptor<DescriptorPublicKey> = "tr([5940b9b9/86'/0'/0']tpubDDVNqmq75GNPWQ9UNKfP43UwjaHU4GYfoPavojQbfpyfZp2KetWgjGBRRAy4tYCrAA6SB11mhQAkqxjh1VtQHyKwT4oYxpwLaGHvoKmtxZf/0/*)#44aqnlam".parse().unwrap();
 
-        let desc_changeset: BTreeMap<u64, Option<Descriptor<DescriptorPublicKey>>> = [
-            (0, Some(descriptor.clone())),
-            (1, Some(change_descriptor.clone())),
-        ]
-        .into();
+        let desc_changeset: BTreeMap<u64, Descriptor<DescriptorPublicKey>> =
+            [(0, descriptor.clone()), (1, change_descriptor.clone())].into();
 
         store.persist_keychains(&write_tx, &desc_changeset).unwrap();
         write_tx.commit().unwrap();
 
         let read_tx = store.db.begin_read().unwrap();
-        let mut desc_changeset: BTreeMap<u64, Option<Descriptor<DescriptorPublicKey>>> =
-            BTreeMap::new();
+        let mut desc_changeset: BTreeMap<u64, Descriptor<DescriptorPublicKey>> = BTreeMap::new();
         store.read_keychains(&read_tx, &mut desc_changeset).unwrap();
 
-        assert_eq!(*desc_changeset.get(&0).unwrap(), Some(descriptor));
-        assert_eq!(*desc_changeset.get(&1).unwrap(), Some(change_descriptor));
+        assert_eq!(*desc_changeset.get(&0).unwrap(), descriptor);
+        assert_eq!(*desc_changeset.get(&1).unwrap(), change_descriptor);
     }
 
     #[test]
@@ -880,18 +866,15 @@ mod test {
         let descriptor: Descriptor<DescriptorPublicKey> = "tr([5940b9b9/86'/0'/0']tpubDDVNqmq75GNPWQ9UNKfP43UwjaHU4GYfoPavojQbfpyfZp2KetWgjGBRRAy4tYCrAA6SB11mhQAkqxjh1VtQHyKwT4oYxpwLaGHvoKmtxZf/0/*)#44aqnlam".parse().unwrap();
 
         store
-            .persist_keychains(&write_tx, &[(0, Some(descriptor.clone()))].into())
+            .persist_keychains(&write_tx, &[(0, descriptor.clone())].into())
             .unwrap();
         write_tx.commit().unwrap();
 
         let read_tx = store.db.begin_read().unwrap();
-        // an empty changeset of descs (maps label to descriptor, if value is Some that means desc being added
-        // if value is None that means desc being removed)
-        let mut desc_changeset: BTreeMap<u64, Option<Descriptor<DescriptorPublicKey>>> =
-            BTreeMap::new();
+        let mut desc_changeset: BTreeMap<u64, Descriptor<DescriptorPublicKey>> = BTreeMap::new();
         store.read_keychains(&read_tx, &mut desc_changeset).unwrap();
 
-        assert_eq!(*desc_changeset.get(&0).unwrap(), Some(descriptor));
+        assert_eq!(*desc_changeset.get(&0).unwrap(), descriptor);
         assert_eq!(desc_changeset.get(&1), None);
     }
 
