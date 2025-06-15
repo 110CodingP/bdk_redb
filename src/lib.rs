@@ -1367,30 +1367,44 @@ mod test {
                 .descriptor_id()
         });
 
-        let keychain_txout_changeset = keychain_txout::ChangeSet {
-            last_revealed: [(descriptor_ids[0], 1), (descriptor_ids[1], 100)].into(),
-            spk_cache: [].into(),
-        };
+        let mut last_revealed: BTreeMap<DescriptorId, u32> =
+            [(descriptor_ids[0], 1), (descriptor_ids[1], 100)].into();
 
         let write_tx = store.db.begin_write().unwrap();
         let _ = write_tx
             .open_table(store.last_revealed_table_defn())
             .unwrap();
         store
-            .persist_last_revealed(&write_tx, &keychain_txout_changeset.last_revealed)
+            .persist_last_revealed(&write_tx, &last_revealed)
             .unwrap();
         write_tx.commit().unwrap();
 
-        let mut changeset = keychain_txout::ChangeSet::default();
+        let mut last_revealed_read: BTreeMap<DescriptorId, u32> = BTreeMap::new();
         let read_tx = store.db.begin_read().unwrap();
         store
-            .read_last_revealed(&read_tx, &mut changeset.last_revealed)
+            .read_last_revealed(&read_tx, &mut last_revealed_read)
             .unwrap();
 
-        assert_eq!(
-            changeset.last_revealed,
-            keychain_txout_changeset.last_revealed
-        );
+        assert_eq!(last_revealed, last_revealed_read);
+
+        let last_revealed_new: BTreeMap<DescriptorId, u32> =
+            [(descriptor_ids[0], 2), (descriptor_ids[1], 99)].into();
+
+        let write_tx = store.db.begin_write().unwrap();
+        store
+            .persist_last_revealed(&write_tx, &last_revealed_new)
+            .unwrap();
+        write_tx.commit().unwrap();
+
+        let mut last_revealed_read_new: BTreeMap<DescriptorId, u32> = BTreeMap::new();
+        let read_tx = store.db.begin_read().unwrap();
+        store
+            .read_last_revealed(&read_tx, &mut last_revealed_read_new)
+            .unwrap();
+
+        last_revealed.merge(last_revealed_new);
+
+        assert_eq!(last_revealed, last_revealed_read_new);
     }
 
     #[test]
