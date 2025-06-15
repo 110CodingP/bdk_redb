@@ -1,3 +1,4 @@
+// Superset of all errors that can occur.
 #[derive(Debug, thiserror::Error)]
 pub enum BdkRedbError {
     #[error(transparent)]
@@ -7,6 +8,7 @@ pub enum BdkRedbError {
     DataMissingError(#[from] MissingError),
 }
 
+// Enum that groups all errors which deal with a structure not being persisted.
 #[derive(Debug, thiserror::Error)]
 pub enum MissingError {
     #[error("network yet to be persisted")]

@@ -20,8 +20,12 @@ use wrapper::{
     TxidWrapper,
 };
 
+// The following table stores (wallet_name, network) pairs. This is common to all wallets in
+// a database file.
 const NETWORK: TableDefinition<&str, String> = TableDefinition::new("network");
 
+// This is the primary struct of this crate. It holds the database corresponding to a wallet.
+// It also holds the table names of tables which are specific to each wallet in a database file.
 pub struct Store {
     db: Database,
     wallet_name: String,
@@ -39,55 +43,73 @@ pub struct Store {
 }
 
 impl Store {
+    // This table stores (keychain, Descriptor) pairs on a high level.
+    // keychain is as in bdk_wallet#230 .
     fn keychains_table_defn(&self) -> TableDefinition<u64, String> {
         TableDefinition::new(&self.keychain_table_name)
     }
 
+    // This table stores (height, BlockHash) pairs on a high level.
     fn local_chain_table_defn(&self) -> TableDefinition<u32, BlockHashWrapper> {
         TableDefinition::new(&self.local_chain_table_name)
     }
 
+    // This table stores (height, BlockHash) pairs on a high level.
     fn txs_table_defn(&self) -> TableDefinition<TxidWrapper, TransactionWrapper> {
         TableDefinition::new(&self.txs_table_name)
     }
 
+    // This table stores (Outpoint, TxOut) pairs on a high level.
     fn txouts_table_defn(
         &self,
     ) -> TableDefinition<(TxidWrapper, u32), (AmountWrapper, ScriptWrapper)> {
         TableDefinition::new(&self.txouts_table_name)
     }
 
+    // This table stores ((Txid, BlockId), Metadata) pairs on a high level where Metadata refers to
+    // extra information stored inside the anchor. For example confirmation time would be metadata
+    // in case of ConfirmationBlockTime.
+    // The key was chosen like this because a transaction can be anchored in multiple Blocks
+    // (in different chains ) and a Block can anchor multiple transactions.
     fn anchors_table_defn<A: AnchorWithMetaData>(
         &self,
     ) -> TableDefinition<(TxidWrapper, BlockIdWrapper), A::MetaDataType> {
         TableDefinition::new(&self.anchors_table_name)
     }
 
+    // This table stores (Txid, last_seen) pairs on a high level.
     fn last_seen_defn(&self) -> TableDefinition<TxidWrapper, u64> {
         TableDefinition::new(&self.last_seen_table_name)
     }
 
+    // This table stores (Txid, last_evicted) pairs on a high level.
     fn last_evicted_table_defn(&self) -> TableDefinition<TxidWrapper, u64> {
         TableDefinition::new(&self.last_evicted_table_name)
     }
 
+    // This table stores (Txid, first_seen) pairs on a high level.
     fn first_seen_table_defn(&self) -> TableDefinition<TxidWrapper, u64> {
         TableDefinition::new(&self.first_seen_table_name)
     }
 
+    // This table stores (DescriptorId, last_revealed_index) pairs on a high level.
     fn last_revealed_table_defn(&self) -> TableDefinition<DIDWrapper, u32> {
         TableDefinition::new(&self.last_revealed_table_name)
     }
 
+    // This table stores ((DescriptorId, index), ScriptPubKey) pairs on a high level.
     fn spk_table_defn(&self) -> TableDefinition<(DIDWrapper, u32), ScriptWrapper> {
         TableDefinition::new(&self.spk_table_name)
     }
 
+    // This function creates a brand new `Store`.
     pub fn new<P>(file_path: P, wallet_name: String) -> Result<Self, BdkRedbError>
     where
         P: AsRef<Path>,
     {
         let db = Database::create(file_path).map_err(redb::Error::from)?;
+
+        // Create table names to be stored in the Store.
         let mut keychain_table_name = wallet_name.clone();
         keychain_table_name.push_str("_keychain");
         let mut local_chain_table_name = wallet_name.clone();
@@ -124,6 +146,7 @@ impl Store {
         })
     }
 
+    // This function initializes all tables since open_table creates a new one if it doesn't exist.
     pub fn create_tables<A: AnchorWithMetaData>(&mut self) -> Result<(), BdkRedbError> {
         let write_tx = self.db.begin_write().map_err(redb::Error::from)?;
 
@@ -145,6 +168,8 @@ impl Store {
         Ok(())
     }
 
+    // This function persists `bdk_wallet::Changeset` into our db. It persists each field by calling
+    // corresponding persistence functions.
     pub fn persist_changeset(&self, changeset: &ChangeSet) -> Result<(), BdkRedbError> {
         let write_tx = self.db.begin_write().unwrap();
 
@@ -165,6 +190,8 @@ impl Store {
         Ok(())
     }
 
+    // This function persists `bdk_chain::tx_graph::Changeset` into our db. It persists each field
+    // by calling corresponding persistence functions.
     pub fn persist_tx_graph<A: AnchorWithMetaData>(
         &self,
         changeset: &tx_graph::ChangeSet<A>,
@@ -183,6 +210,9 @@ impl Store {
         Ok(())
     }
 
+
+    // This function persists `indexer::keychain_txout::Changeset` into our db. It persists each
+    // field by calling corresponding persistence functions.
     pub fn persist_indexer(
         &self,
         write_tx: &WriteTransaction,
@@ -194,6 +224,7 @@ impl Store {
         Ok(())
     }
 
+    // This function persists the descriptors into our db.
     pub fn persist_keychains(
         &self,
         write_tx: &WriteTransaction,
@@ -206,7 +237,6 @@ impl Store {
             .open_table(self.keychains_table_defn())
             .map_err(redb::Error::from)?;
 
-        // assuming descriptor would be persisted once and only once for whole lifetime of wallet.
         for (label, desc) in changeset {
             let _ = match desc {
                 Some(desc) => table.insert(label, desc.to_string()),
@@ -216,6 +246,7 @@ impl Store {
         Ok(())
     }
 
+    // This function persists the network into our db.
     pub fn persist_network(
         &self,
         write_tx: &WriteTransaction,
@@ -230,6 +261,8 @@ impl Store {
         Ok(())
     }
 
+    // This function persists `bdk_chain::local_chain::Changeset` by calling the corresponding
+    // persistence function for `blocks`.
     pub fn persist_local_chain(
         &self,
         write_tx: &WriteTransaction,
@@ -239,6 +272,7 @@ impl Store {
         Ok(())
     }
 
+    // This function persists blocks corresponding to a local_chain.
     pub fn persist_blocks(
         &self,
         write_tx: &WriteTransaction,
@@ -250,12 +284,14 @@ impl Store {
         for (ht, hash) in blocks {
             match hash {
                 Some(hash) => table.insert(*ht, BlockHashWrapper(*hash)).unwrap(),
+                // remove the block if hash is None
                 None => table.remove(*ht).unwrap(),
             };
         }
         Ok(())
     }
 
+    // This function persists txs corresponding to a tx_graph.
     pub fn persist_txs(
         &self,
         write_tx: &WriteTransaction,
@@ -275,6 +311,7 @@ impl Store {
         Ok(())
     }
 
+    // This function persists txouts corresponding to a tx_graph.
     pub fn persist_txouts(
         &self,
         write_tx: &WriteTransaction,
@@ -297,6 +334,7 @@ impl Store {
         Ok(())
     }
 
+    // This function persists anchors corresponding to a tx_graph.
     pub fn persist_anchors<A: AnchorWithMetaData>(
         &self,
         write_tx: &WriteTransaction,
@@ -310,6 +348,8 @@ impl Store {
             .open_table(self.txs_table_defn())
             .map_err(redb::Error::from)?;
         for (anchor, txid) in anchors {
+            // if the corresponding txn exists in Txs table (trying to imitate the
+            // referential behavior in case of sqlite)
             if txs_table.get(TxidWrapper(*txid)).unwrap().is_some() {
                 table
                     .insert(
@@ -322,6 +362,7 @@ impl Store {
         Ok(())
     }
 
+    // This function persists last_seen flags corresponding to a tx_graph.
     pub fn persist_last_seen(
         &self,
         write_tx: &WriteTransaction,
@@ -335,6 +376,8 @@ impl Store {
             .open_table(self.txs_table_defn())
             .map_err(redb::Error::from)?;
         for (txid, last_seen_time) in last_seen {
+            // if the corresponding txn exists in Txs table (trying to duplicate the
+            // referential behavior in case of sqlite)
             if txs_table.get(TxidWrapper(*txid)).unwrap().is_some() {
                 table.insert(TxidWrapper(*txid), *last_seen_time).unwrap();
             }
@@ -342,6 +385,7 @@ impl Store {
         Ok(())
     }
 
+    // This function persists last_evicted flags corresponding to a tx_graph .
     pub fn persist_last_evicted(
         &self,
         write_tx: &WriteTransaction,
@@ -351,6 +395,8 @@ impl Store {
         let mut table = write_tx.open_table(self.last_evicted_table_defn()).unwrap();
         let txs_table = read_tx.open_table(self.txs_table_defn()).unwrap();
         for (tx, last_evicted_time) in last_evicted {
+            // if the corresponding txn exists in Txs table (trying to duplicate the
+            // referential behavior in case of sqlite)
             if txs_table.get(TxidWrapper(*tx)).unwrap().is_some() {
                 table.insert(TxidWrapper(*tx), last_evicted_time).unwrap();
             }
@@ -358,6 +404,7 @@ impl Store {
         Ok(())
     }
 
+    // This function persists first_seen flags corresponding to a tx_graph .
     pub fn persist_first_seen(
         &self,
         write_tx: &WriteTransaction,
@@ -367,6 +414,8 @@ impl Store {
         let mut table = write_tx.open_table(self.first_seen_table_defn()).unwrap();
         let txs_table = read_tx.open_table(self.txs_table_defn()).unwrap();
         for (tx, first_seen_time) in first_seen {
+            // if the corresponding txn exists in Txs table (trying to duplicate the
+            // referential behavior in case of sqlite)
             if txs_table.get(TxidWrapper(*tx)).unwrap().is_some() {
                 table.insert(TxidWrapper(*tx), first_seen_time).unwrap();
             }
@@ -374,6 +423,7 @@ impl Store {
         Ok(())
     }
 
+    // This function persists last_revealed corresponding to keychain_txout .
     pub fn persist_last_revealed(
         &self,
         write_tx: &WriteTransaction,
@@ -388,6 +438,7 @@ impl Store {
         Ok(())
     }
 
+    // This function persists spk_cache corresponding to keychain_txout .
     pub fn persist_spks(
         &self,
         write_tx: &WriteTransaction,
@@ -409,6 +460,9 @@ impl Store {
         Ok(())
     }
 
+
+    // This function loads `bdk_wallet::Changeset` from db. It calls the corresponding load
+    // functions for each of its fields.
     pub fn read_changeset(&self, changeset: &mut ChangeSet) -> Result<(), BdkRedbError> {
         let read_tx = self.db.begin_read().unwrap();
 
@@ -429,6 +483,8 @@ impl Store {
         Ok(())
     }
 
+    // This function loads `bdk_chain::tx_graph::Changeset` from db. It calls the corresponding load
+    // functions for each of its fields.
     pub fn read_tx_graph<A: AnchorWithMetaData>(
         &self,
         read_tx: &ReadTransaction,
@@ -443,6 +499,8 @@ impl Store {
         Ok(())
     }
 
+    // This function loads `bdk_chain::indexer::keychain_txout` from db. It calls the corresponding load
+    // functions for each of its fields.
     pub fn read_indexer(
         &self,
         read_tx: &ReadTransaction,
@@ -453,6 +511,7 @@ impl Store {
         Ok(())
     }
 
+    // This function loads descriptors from db.
     pub fn read_keychains(
         &self,
         read_tx: &ReadTransaction,
@@ -475,6 +534,7 @@ impl Store {
         Ok(())
     }
 
+    // This function loads network from db.
     pub fn read_network(
         &self,
         read_tx: &ReadTransaction,
@@ -492,6 +552,8 @@ impl Store {
         Ok(())
     }
 
+    // This function loads `bdk_chain::local_chain` from db. It calls the corresponding load
+    // function for blocks.
     pub fn read_local_chain(
         &self,
         read_tx: &ReadTransaction,
@@ -501,6 +563,7 @@ impl Store {
         Ok(())
     }
 
+    // This function loads blocks corresponding to local_chain .
     pub fn read_blocks(
         &self,
         read_tx: &ReadTransaction,
@@ -520,6 +583,7 @@ impl Store {
         Ok(())
     }
 
+    // This function loads txs corresponding to tx_graph.
     pub fn read_txs(
         &self,
         read_tx: &ReadTransaction,
@@ -532,6 +596,7 @@ impl Store {
         Ok(())
     }
 
+    // This function loads txouts corresponding to tx_graph.
     pub fn read_txouts(
         &self,
         read_tx: &ReadTransaction,
@@ -553,6 +618,7 @@ impl Store {
         Ok(())
     }
 
+    // This function loads anchors corresponding to tx_graph.
     pub fn read_anchors<A: AnchorWithMetaData>(
         &self,
         read_tx: &ReadTransaction,
@@ -573,6 +639,7 @@ impl Store {
         Ok(())
     }
 
+    // This function loads last_seen flags corresponding to tx_graph.
     pub fn read_last_seen(
         &self,
         read_tx: &ReadTransaction,
@@ -590,6 +657,7 @@ impl Store {
         Ok(())
     }
 
+    // This function loads last_evicted flags corresponding to tx_graph .
     pub fn read_last_evicted(
         &self,
         read_tx: &ReadTransaction,
@@ -607,6 +675,7 @@ impl Store {
         Ok(())
     }
 
+    // This function loads first_seen flags corresponding to tx_graph.
     pub fn read_first_seen(
         &self,
         read_tx: &ReadTransaction,
@@ -624,6 +693,7 @@ impl Store {
         Ok(())
     }
 
+    // This function loads last_revealed corresponding to keychain_txout .
     pub fn read_last_revealed(
         &self,
         read_tx: &ReadTransaction,
@@ -641,6 +711,7 @@ impl Store {
         Ok(())
     }
 
+    // This function loads spk_cache corresponding to keychain_txout .
     pub fn read_spks(
         &self,
         read_tx: &ReadTransaction,

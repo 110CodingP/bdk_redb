@@ -1,3 +1,4 @@
+// This module contains wrappers which are used to implement `redb::Value` on the underlying structures.
 use bdk_wallet::bitcoin::{self, Amount, BlockHash, ScriptBuf, Txid, hashes::Hash};
 use bdk_wallet::chain::{BlockId, DescriptorId};
 use redb::{Key, TypeName, Value};

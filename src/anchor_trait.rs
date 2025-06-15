@@ -1,12 +1,16 @@
 use bdk_wallet::chain::{Anchor, BlockId, ConfirmationBlockTime};
 use redb::Value;
+
+// A trait that provides metadata corresponding to an anchor. In case of ConfirmationBlockTime
+// the metadata will be the confirmation time while in case of BlockId it will simply be None.
 pub trait AnchorWithMetaData: Anchor {
+    // Type corresponding to the Anchors's metadata.
     type MetaDataType: Value + 'static;
 
-    // to be used as value in anchors table
+    // This function returns the metadata corresponding to the anchor.
     fn metadata(&self) -> <Self::MetaDataType as redb::Value>::SelfType<'_>;
 
-    // to use in read_anchors
+    // This function creates an Anchor from BlockId and metadata.
     fn from_id(id: BlockId, metadata: <Self::MetaDataType as redb::Value>::SelfType<'_>) -> Self;
 }
 
