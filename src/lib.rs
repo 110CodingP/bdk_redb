@@ -1101,48 +1101,63 @@ mod test {
     fn test_persist_txouts() {
         let tmpfile = NamedTempFile::new().unwrap();
         let store = create_test_store(tmpfile, "wallet_1");
-        let tx_graph_changeset1 = tx_graph::ChangeSet::<ConfirmationBlockTime> {
-            txs: [].into(),
-            txouts: [
-                (
-                    OutPoint {
-                        txid: Txid::from_byte_array([0; 32]),
-                        vout: 0,
-                    },
-                    TxOut {
-                        value: Amount::from_sat(1300),
-                        script_pubkey: ScriptBuf::from_bytes(vec![0]),
-                    },
-                ),
-                (
-                    OutPoint {
-                        txid: Txid::from_byte_array([1; 32]),
-                        vout: 0,
-                    },
-                    TxOut {
-                        value: Amount::from_sat(1400),
-                        script_pubkey: ScriptBuf::from_bytes(vec![2]),
-                    },
-                ),
-            ]
-            .into(),
-            anchors: [].into(),
-            last_seen: [].into(),
-            first_seen: [].into(),
-            last_evicted: [].into(),
-        };
+
+        let mut txouts: BTreeMap<OutPoint, TxOut> = [
+            (
+                OutPoint {
+                    txid: Txid::from_byte_array([0; 32]),
+                    vout: 0,
+                },
+                TxOut {
+                    value: Amount::from_sat(1300),
+                    script_pubkey: ScriptBuf::from_bytes(vec![0]),
+                },
+            ),
+            (
+                OutPoint {
+                    txid: Txid::from_byte_array([1; 32]),
+                    vout: 0,
+                },
+                TxOut {
+                    value: Amount::from_sat(1400),
+                    script_pubkey: ScriptBuf::from_bytes(vec![2]),
+                },
+            ),
+        ]
+        .into();
 
         let write_tx = store.db.begin_write().unwrap();
         let _ = write_tx.open_table(store.txouts_table_defn()).unwrap();
-        store
-            .persist_txouts(&write_tx, &tx_graph_changeset1.txouts)
-            .unwrap();
+        store.persist_txouts(&write_tx, &txouts).unwrap();
         write_tx.commit().unwrap();
 
         let read_tx = store.db.begin_read().unwrap();
-        let mut changeset = tx_graph::ChangeSet::<ConfirmationBlockTime>::default();
-        store.read_txouts(&read_tx, &mut changeset.txouts).unwrap();
-        assert_eq!(changeset.txouts, tx_graph_changeset1.txouts);
+        let mut txouts_read: BTreeMap<OutPoint, TxOut> = BTreeMap::new();
+        store.read_txouts(&read_tx, &mut txouts_read).unwrap();
+        assert_eq!(txouts, txouts_read);
+
+        let txouts_new: BTreeMap<OutPoint, TxOut> = [(
+            OutPoint {
+                txid: Txid::from_byte_array([2; 32]),
+                vout: 0,
+            },
+            TxOut {
+                value: Amount::from_sat(10000),
+                script_pubkey: ScriptBuf::from_bytes(vec![1]),
+            },
+        )]
+        .into();
+        let write_tx = store.db.begin_write().unwrap();
+        let _ = write_tx.open_table(store.txouts_table_defn()).unwrap();
+        store.persist_txouts(&write_tx, &txouts_new).unwrap();
+        write_tx.commit().unwrap();
+
+        let read_tx = store.db.begin_read().unwrap();
+        let mut txouts_read_new: BTreeMap<OutPoint, TxOut> = BTreeMap::new();
+        store.read_txouts(&read_tx, &mut txouts_read_new).unwrap();
+
+        txouts.merge(txouts_new);
+        assert_eq!(txouts, txouts_read_new);
     }
 
     #[test]
