@@ -147,23 +147,53 @@ impl Store {
     }
 
     // This function initializes all tables since open_table creates a new one if it doesn't exist.
-    pub fn create_tables<A: AnchorWithMetaData>(&mut self) -> Result<(), BdkRedbError> {
+    pub fn create_tables<A: AnchorWithMetaData>(&self) -> Result<(), BdkRedbError> {
         let write_tx = self.db.begin_write().map_err(redb::Error::from)?;
 
         let _ = write_tx.open_table(NETWORK).unwrap();
         let _ = write_tx.open_table(self.keychains_table_defn()).unwrap();
+        write_tx.commit().map_err(redb::Error::from)?;
+
+        self.create_local_chain_tables()?;
+        self.create_tx_graph_tables::<A>()?;
+        self.create_indexer_tables()?;
+
+        Ok(())
+    }
+
+    // This function initializes tables corresponding to local_chain since open_table creates
+    // a new one if it doesn't exist.
+    pub fn create_local_chain_tables(&self) -> Result<(), BdkRedbError> {
+        let write_tx = self.db.begin_write().map_err(redb::Error::from)?;
+        let _ = write_tx.open_table(self.local_chain_table_defn()).unwrap();
+        write_tx.commit().map_err(redb::Error::from)?;
+        Ok(())
+    }
+
+    // This function initializes tables corresponding to tx_graph since open_table creates
+    // a new one if it doesn't exist.
+    pub fn create_tx_graph_tables<A: AnchorWithMetaData>(&self) -> Result<(), BdkRedbError> {
+        let write_tx = self.db.begin_write().map_err(redb::Error::from)?;
+        let _ = write_tx.open_table(self.txs_table_defn()).unwrap();
+        let _ = write_tx.open_table(self.txouts_table_defn()).unwrap();
+        let _ = write_tx.open_table(self.anchors_table_defn::<A>()).unwrap();
+        let _ = write_tx.open_table(self.last_seen_defn()).unwrap();
+        let _ = write_tx.open_table(self.last_evicted_table_defn()).unwrap();
+        let _ = write_tx.open_table(self.first_seen_table_defn()).unwrap();
+
+        write_tx.commit().map_err(redb::Error::from)?;
+        Ok(())
+    }
+
+    // This function initializes tables corresponding to indexer since open_table creates
+    // a new one if it doesn't exist.
+    pub fn create_indexer_tables(&self) -> Result<(), BdkRedbError> {
+        let write_tx = self.db.begin_write().map_err(redb::Error::from)?;
+        let _ = write_tx.open_table(self.spk_table_defn()).unwrap();
+
         let _ = write_tx
             .open_table(self.last_revealed_table_defn())
             .unwrap();
-        let _ = write_tx.open_table(self.local_chain_table_defn()).unwrap();
-        let _ = write_tx.open_table(self.txouts_table_defn()).unwrap();
-        let _ = write_tx.open_table(self.last_seen_defn()).unwrap();
-        let _ = write_tx.open_table(self.txs_table_defn()).unwrap();
-        let _ = write_tx.open_table(self.anchors_table_defn::<A>()).unwrap();
-        let _ = write_tx.open_table(self.last_evicted_table_defn()).unwrap();
-        let _ = write_tx.open_table(self.first_seen_table_defn()).unwrap();
-        let _ = write_tx.open_table(self.spk_table_defn()).unwrap();
-
         write_tx.commit().map_err(redb::Error::from)?;
         Ok(())
     }
@@ -209,7 +239,6 @@ impl Store {
         write_tx.commit().unwrap();
         Ok(())
     }
-
 
     // This function persists `indexer::keychain_txout::Changeset` into our db. It persists each
     // field by calling corresponding persistence functions.
@@ -459,7 +488,6 @@ impl Store {
         }
         Ok(())
     }
-
 
     // This function loads `bdk_wallet::Changeset` from db. It calls the corresponding load
     // functions for each of its fields.
@@ -879,8 +907,8 @@ mod test {
         blocks.insert(2u32, Some(hash!("K")));
 
         let local_chain_changeset = local_chain::ChangeSet { blocks };
+        store.create_local_chain_tables().unwrap();
         let write_tx = store.db.begin_write().unwrap();
-        let _ = write_tx.open_table(store.local_chain_table_defn()).unwrap();
         store
             .persist_local_chain(&write_tx, &local_chain_changeset)
             .unwrap();
@@ -1375,18 +1403,9 @@ mod test {
             last_evicted: [(tx1.clone().compute_txid(), 150)].into(),
         };
 
-        let write_tx = store.db.begin_write().unwrap();
-        let _ = write_tx.open_table(store.txs_table_defn()).unwrap();
-        let _ = write_tx.open_table(store.txouts_table_defn()).unwrap();
-        let _ = write_tx
-            .open_table(store.anchors_table_defn::<ConfirmationBlockTime>())
+        store
+            .create_tx_graph_tables::<ConfirmationBlockTime>()
             .unwrap();
-        let _ = write_tx.open_table(store.last_seen_defn()).unwrap();
-        let _ = write_tx
-            .open_table(store.last_evicted_table_defn())
-            .unwrap();
-        let _ = write_tx.open_table(store.first_seen_table_defn()).unwrap();
-        write_tx.commit().unwrap();
 
         store.persist_tx_graph(&tx_graph_changeset1).unwrap();
 
@@ -1556,8 +1575,8 @@ mod test {
             .into(),
         };
 
+        store.create_indexer_tables().unwrap();
         let write_tx = store.db.begin_write().unwrap();
-        let _ = write_tx.open_table(store.spk_table_defn()).unwrap();
         store
             .persist_indexer(&write_tx, &keychain_txout_changeset)
             .unwrap();
@@ -1573,7 +1592,7 @@ mod test {
     #[test]
     fn test_persist_changeset() {
         let tmpfile = NamedTempFile::new().unwrap();
-        let mut store = create_test_store(tmpfile.path(), "wallet1");
+        let store = create_test_store(tmpfile.path(), "wallet1");
 
         let descriptor: Descriptor<DescriptorPublicKey> = DESCRIPTORS[1].parse().unwrap();
         let change_descriptor: Descriptor<DescriptorPublicKey> = DESCRIPTORS[0].parse().unwrap();
