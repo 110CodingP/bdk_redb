@@ -256,9 +256,7 @@ impl Store {
     pub fn persist_keychains(
         &self,
         write_tx: &WriteTransaction,
-        // maps label to descriptor, we remove desc corresponding to label mapping to None.
-        // can't really see how we can remove desc considering TxGraph is monotone
-        // but do other wallets allow this?
+        // maps label to descriptor
         changeset: &BTreeMap<u64, Descriptor<DescriptorPublicKey>>,
     ) -> Result<(), BdkRedbError> {
         let mut table = write_tx
