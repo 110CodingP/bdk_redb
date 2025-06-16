@@ -1491,9 +1491,7 @@ mod test {
                 .descriptor_id()
         });
 
-        let keychain_txout_changeset = keychain_txout::ChangeSet {
-            last_revealed: [].into(),
-            spk_cache: [
+        let spk_cache: BTreeMap<DescriptorId, BTreeMap<u32, ScriptBuf>> =  [
                 (
                     descriptor_ids[0],
                     [(0u32, ScriptBuf::from_bytes(vec![1, 2, 3]))].into(),
@@ -1507,21 +1505,57 @@ mod test {
                     .into(),
                 ),
             ]
-            .into(),
-        };
+            .into();
 
         let write_tx = store.db.begin_write().unwrap();
         let _ = write_tx.open_table(store.spk_table_defn()).unwrap();
         store
-            .persist_spks(&write_tx, &keychain_txout_changeset.spk_cache)
+            .persist_spks(&write_tx, &spk_cache)
             .unwrap();
         write_tx.commit().unwrap();
 
-        let mut changeset = keychain_txout::ChangeSet::default();
+        let mut spk_cache_read: BTreeMap<DescriptorId, BTreeMap<u32,ScriptBuf>> = BTreeMap::new();
         let read_tx = store.db.begin_read().unwrap();
-        store.read_spks(&read_tx, &mut changeset.spk_cache).unwrap();
+        store.read_spks(&read_tx, &mut spk_cache_read).unwrap();
 
-        assert_eq!(changeset.spk_cache, keychain_txout_changeset.spk_cache);
+        assert_eq!(spk_cache, spk_cache_read);
+
+        let spk_cache_new: BTreeMap<DescriptorId, BTreeMap<u32, ScriptBuf>> =  [
+            (
+                descriptor_ids[0],
+                [(1u32, ScriptBuf::from_bytes(vec![1, 2, 3, 4]))].into(),
+            )
+        ]
+            .into();
+
+        let write_tx = store.db.begin_write().unwrap();
+        let _ = write_tx.open_table(store.spk_table_defn()).unwrap();
+        store
+            .persist_spks(&write_tx, &spk_cache_new)
+            .unwrap();
+        write_tx.commit().unwrap();
+
+        let mut spk_cache_read_new: BTreeMap<DescriptorId, BTreeMap<u32,ScriptBuf>> = BTreeMap::new();
+        let read_tx = store.db.begin_read().unwrap();
+        store.read_spks(&read_tx, &mut spk_cache_read_new).unwrap();
+
+        let spk_cache: BTreeMap<DescriptorId, BTreeMap<u32, ScriptBuf>> =  [
+            (
+                descriptor_ids[0],
+                [(0u32, ScriptBuf::from_bytes(vec![1, 2, 3])), (1u32, ScriptBuf::from_bytes(vec![1,2,3,4]))].into(),
+            ),
+            (
+                descriptor_ids[1],
+                [
+                    (100u32, ScriptBuf::from_bytes(vec![3])),
+                    (1000u32, ScriptBuf::from_bytes(vec![5, 6, 8])),
+                ]
+                    .into(),
+            ),
+        ]
+            .into();
+
+        assert_eq!(spk_cache, spk_cache_read_new);
     }
 
     #[test]
@@ -1537,7 +1571,7 @@ mod test {
                 .descriptor_id()
         });
 
-        let keychain_txout_changeset = keychain_txout::ChangeSet {
+        let mut keychain_txout_changeset = keychain_txout::ChangeSet {
             last_revealed: [(descriptor_ids[0], 1), (descriptor_ids[1], 100)].into(),
             spk_cache: [
                 (
@@ -1567,7 +1601,30 @@ mod test {
         let read_tx = store.db.begin_read().unwrap();
         store.read_indexer(&read_tx, &mut changeset).unwrap();
 
-        assert_eq!(changeset, keychain_txout_changeset);
+        let keychain_txout_changeset_new = keychain_txout::ChangeSet {
+            last_revealed: [(descriptor_ids[0], 2)].into(),
+            spk_cache: [
+                (
+                    descriptor_ids[0],
+                    [(1u32, ScriptBuf::from_bytes(vec![1, 2, 3]))].into(),
+                ),
+            ]
+                .into(),
+        };
+
+        let write_tx = store.db.begin_write().unwrap();
+        store
+            .persist_indexer(&write_tx, &keychain_txout_changeset_new)
+            .unwrap();
+        write_tx.commit().unwrap();
+
+        let mut changeset_new = keychain_txout::ChangeSet::default();
+        let read_tx = store.db.begin_read().unwrap();
+        store.read_indexer(&read_tx, &mut changeset_new).unwrap();
+        
+        keychain_txout_changeset.merge(keychain_txout_changeset_new);
+
+        assert_eq!(changeset_new, keychain_txout_changeset);
     }
 
     #[test]
