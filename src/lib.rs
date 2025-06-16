@@ -1117,7 +1117,7 @@ mod test {
         store
             .read_last_evicted(&read_tx, &mut last_evicted_read_new)
             .unwrap();
-        last_evicted.extend(last_evicted_new);
+        last_evicted.merge(last_evicted_new);
         assert_eq!(last_evicted_read_new, last_evicted);
     }
 
@@ -1173,7 +1173,7 @@ mod test {
         store
             .read_first_seen(&read_tx, &mut first_seen_read_new)
             .unwrap();
-        first_seen.extend(first_seen_new);
+        first_seen.merge(first_seen_new);
         assert_eq!(first_seen_read_new, first_seen);
     }
 
@@ -1459,7 +1459,7 @@ mod test {
         assert_eq!(last_revealed, last_revealed_read);
 
         let last_revealed_new: BTreeMap<DescriptorId, u32> =
-            [(descriptor_ids[0], 2), (descriptor_ids[1], 99)].into();
+            [(descriptor_ids[0], 2)].into();
 
         let write_tx = store.db.begin_write().unwrap();
         store
