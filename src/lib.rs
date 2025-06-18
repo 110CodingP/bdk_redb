@@ -1458,8 +1458,7 @@ mod test {
 
         assert_eq!(last_revealed, last_revealed_read);
 
-        let last_revealed_new: BTreeMap<DescriptorId, u32> =
-            [(descriptor_ids[0], 2)].into();
+        let last_revealed_new: BTreeMap<DescriptorId, u32> = [(descriptor_ids[0], 2)].into();
 
         let write_tx = store.db.begin_write().unwrap();
         store
@@ -1491,58 +1490,10 @@ mod test {
                 .descriptor_id()
         });
 
-        let spk_cache: BTreeMap<DescriptorId, BTreeMap<u32, ScriptBuf>> =  [
-                (
-                    descriptor_ids[0],
-                    [(0u32, ScriptBuf::from_bytes(vec![1, 2, 3]))].into(),
-                ),
-                (
-                    descriptor_ids[1],
-                    [
-                        (100u32, ScriptBuf::from_bytes(vec![3])),
-                        (1000u32, ScriptBuf::from_bytes(vec![5, 6, 8])),
-                    ]
-                    .into(),
-                ),
-            ]
-            .into();
-
-        let write_tx = store.db.begin_write().unwrap();
-        let _ = write_tx.open_table(store.spk_table_defn()).unwrap();
-        store
-            .persist_spks(&write_tx, &spk_cache)
-            .unwrap();
-        write_tx.commit().unwrap();
-
-        let mut spk_cache_read: BTreeMap<DescriptorId, BTreeMap<u32,ScriptBuf>> = BTreeMap::new();
-        let read_tx = store.db.begin_read().unwrap();
-        store.read_spks(&read_tx, &mut spk_cache_read).unwrap();
-
-        assert_eq!(spk_cache, spk_cache_read);
-
-        let spk_cache_new: BTreeMap<DescriptorId, BTreeMap<u32, ScriptBuf>> =  [
+        let spk_cache: BTreeMap<DescriptorId, BTreeMap<u32, ScriptBuf>> = [
             (
                 descriptor_ids[0],
-                [(1u32, ScriptBuf::from_bytes(vec![1, 2, 3, 4]))].into(),
-            )
-        ]
-            .into();
-
-        let write_tx = store.db.begin_write().unwrap();
-        let _ = write_tx.open_table(store.spk_table_defn()).unwrap();
-        store
-            .persist_spks(&write_tx, &spk_cache_new)
-            .unwrap();
-        write_tx.commit().unwrap();
-
-        let mut spk_cache_read_new: BTreeMap<DescriptorId, BTreeMap<u32,ScriptBuf>> = BTreeMap::new();
-        let read_tx = store.db.begin_read().unwrap();
-        store.read_spks(&read_tx, &mut spk_cache_read_new).unwrap();
-
-        let spk_cache: BTreeMap<DescriptorId, BTreeMap<u32, ScriptBuf>> =  [
-            (
-                descriptor_ids[0],
-                [(0u32, ScriptBuf::from_bytes(vec![1, 2, 3])), (1u32, ScriptBuf::from_bytes(vec![1,2,3,4]))].into(),
+                [(0u32, ScriptBuf::from_bytes(vec![1, 2, 3]))].into(),
             ),
             (
                 descriptor_ids[1],
@@ -1550,10 +1501,57 @@ mod test {
                     (100u32, ScriptBuf::from_bytes(vec![3])),
                     (1000u32, ScriptBuf::from_bytes(vec![5, 6, 8])),
                 ]
-                    .into(),
+                .into(),
             ),
         ]
-            .into();
+        .into();
+
+        let write_tx = store.db.begin_write().unwrap();
+        let _ = write_tx.open_table(store.spk_table_defn()).unwrap();
+        store.persist_spks(&write_tx, &spk_cache).unwrap();
+        write_tx.commit().unwrap();
+
+        let mut spk_cache_read: BTreeMap<DescriptorId, BTreeMap<u32, ScriptBuf>> = BTreeMap::new();
+        let read_tx = store.db.begin_read().unwrap();
+        store.read_spks(&read_tx, &mut spk_cache_read).unwrap();
+
+        assert_eq!(spk_cache, spk_cache_read);
+
+        let spk_cache_new: BTreeMap<DescriptorId, BTreeMap<u32, ScriptBuf>> = [(
+            descriptor_ids[0],
+            [(1u32, ScriptBuf::from_bytes(vec![1, 2, 3, 4]))].into(),
+        )]
+        .into();
+
+        let write_tx = store.db.begin_write().unwrap();
+        let _ = write_tx.open_table(store.spk_table_defn()).unwrap();
+        store.persist_spks(&write_tx, &spk_cache_new).unwrap();
+        write_tx.commit().unwrap();
+
+        let mut spk_cache_read_new: BTreeMap<DescriptorId, BTreeMap<u32, ScriptBuf>> =
+            BTreeMap::new();
+        let read_tx = store.db.begin_read().unwrap();
+        store.read_spks(&read_tx, &mut spk_cache_read_new).unwrap();
+
+        let spk_cache: BTreeMap<DescriptorId, BTreeMap<u32, ScriptBuf>> = [
+            (
+                descriptor_ids[0],
+                [
+                    (0u32, ScriptBuf::from_bytes(vec![1, 2, 3])),
+                    (1u32, ScriptBuf::from_bytes(vec![1, 2, 3, 4])),
+                ]
+                .into(),
+            ),
+            (
+                descriptor_ids[1],
+                [
+                    (100u32, ScriptBuf::from_bytes(vec![3])),
+                    (1000u32, ScriptBuf::from_bytes(vec![5, 6, 8])),
+                ]
+                .into(),
+            ),
+        ]
+        .into();
 
         assert_eq!(spk_cache, spk_cache_read_new);
     }
@@ -1603,13 +1601,11 @@ mod test {
 
         let keychain_txout_changeset_new = keychain_txout::ChangeSet {
             last_revealed: [(descriptor_ids[0], 2)].into(),
-            spk_cache: [
-                (
-                    descriptor_ids[0],
-                    [(1u32, ScriptBuf::from_bytes(vec![1, 2, 3]))].into(),
-                ),
-            ]
-                .into(),
+            spk_cache: [(
+                descriptor_ids[0],
+                [(1u32, ScriptBuf::from_bytes(vec![1, 2, 3]))].into(),
+            )]
+            .into(),
         };
 
         let write_tx = store.db.begin_write().unwrap();
@@ -1726,21 +1722,16 @@ mod test {
         };
 
         let keychain_txout_changeset = keychain_txout::ChangeSet {
-            last_revealed: [
-                (descriptor.descriptor_id(), 14),
-            ]
+            last_revealed: [(descriptor.descriptor_id(), 14)].into(),
+            spk_cache: [(
+                change_descriptor.descriptor_id(),
+                [
+                    (102u32, ScriptBuf::from_bytes(vec![8, 45, 78])),
+                    (1001u32, ScriptBuf::from_bytes(vec![29, 56, 47])),
+                ]
                 .into(),
-            spk_cache: [
-                (
-                    change_descriptor.descriptor_id(),
-                    [
-                        (102u32, ScriptBuf::from_bytes(vec![8, 45, 78])),
-                        (1001u32, ScriptBuf::from_bytes(vec![29, 56, 47])),
-                    ]
-                        .into(),
-                ),
-            ]
-                .into(),
+            )]
+            .into(),
         };
 
         let changeset_new = ChangeSet {
@@ -1755,10 +1746,9 @@ mod test {
         store.persist_changeset(&changeset_new).unwrap();
         let mut changeset_read_new = ChangeSet::default();
         store.read_changeset(&mut changeset_read_new).unwrap();
-        
+
         changeset.merge(changeset_new);
 
         assert_eq!(changeset, changeset_read_new);
-
     }
 }
