@@ -1621,7 +1621,6 @@ mod test {
         let mut changeset_new = keychain_txout::ChangeSet::default();
         let read_tx = store.db.begin_read().unwrap();
         store.read_indexer(&read_tx, &mut changeset_new).unwrap();
-        
         keychain_txout_changeset.merge(keychain_txout_changeset_new);
 
         assert_eq!(changeset_new, keychain_txout_changeset);
@@ -1641,18 +1640,7 @@ mod test {
         blocks.insert(2u32, Some(hash!("C")));
         let local_chain_changeset = local_chain::ChangeSet { blocks };
 
-        let tx = Transaction {
-            version: transaction::Version::TWO,
-            lock_time: absolute::LockTime::ZERO,
-            input: vec![TxIn {
-                previous_output: OutPoint::null(),
-                ..Default::default()
-            }],
-            output: vec![TxOut {
-                value: Amount::from_sat(25_000),
-                script_pubkey: ScriptBuf::new(),
-            }],
-        };
+        let (tx1, tx2, _) = create_txns();
 
         let block_id = BlockId {
             height: 1,
@@ -1665,12 +1653,12 @@ mod test {
         };
 
         let tx_graph_changeset = tx_graph::ChangeSet::<ConfirmationBlockTime> {
-            txs: [Arc::new(tx.clone())].into(),
+            txs: [Arc::new(tx1.clone())].into(),
             txouts: [].into(),
-            anchors: [(conf_anchor, tx.compute_txid())].into(),
-            last_seen: [(tx.clone().compute_txid(), 100)].into(),
-            first_seen: [(tx.clone().compute_txid(), 80)].into(),
-            last_evicted: [(tx.clone().compute_txid(), 150)].into(),
+            anchors: [(conf_anchor, tx1.compute_txid())].into(),
+            last_seen: [(tx1.clone().compute_txid(), 100)].into(),
+            first_seen: [(tx1.clone().compute_txid(), 80)].into(),
+            last_evicted: [(tx1.clone().compute_txid(), 150)].into(),
         };
 
         let keychain_txout_changeset = keychain_txout::ChangeSet {
@@ -1696,9 +1684,9 @@ mod test {
             .into(),
         };
 
-        let changeset_persisted = ChangeSet {
-            descriptor: Some(descriptor),
-            change_descriptor: Some(change_descriptor),
+        let mut changeset = ChangeSet {
+            descriptor: Some(descriptor.clone()),
+            change_descriptor: Some(change_descriptor.clone()),
             network: Some(Network::Bitcoin),
             local_chain: local_chain_changeset,
             tx_graph: tx_graph_changeset,
@@ -1707,10 +1695,70 @@ mod test {
 
         store.create_tables::<ConfirmationBlockTime>().unwrap();
 
-        store.persist_changeset(&changeset_persisted).unwrap();
+        store.persist_changeset(&changeset).unwrap();
         let mut changeset_read = ChangeSet::default();
         store.read_changeset(&mut changeset_read).unwrap();
 
-        assert_eq!(changeset_persisted, changeset_read);
+        assert_eq!(changeset, changeset_read);
+
+        let mut blocks: BTreeMap<u32, Option<BlockHash>> = BTreeMap::new();
+        blocks.insert(4u32, Some(hash!("RE")));
+        blocks.insert(5u32, Some(hash!("DB")));
+        let local_chain_changeset = local_chain::ChangeSet { blocks };
+
+        let block_id = BlockId {
+            height: 2,
+            hash: hash!("Bitcoin"),
+        };
+
+        let conf_anchor: ConfirmationBlockTime = ConfirmationBlockTime {
+            block_id,
+            confirmation_time: 214,
+        };
+
+        let tx_graph_changeset = tx_graph::ChangeSet::<ConfirmationBlockTime> {
+            txs: [Arc::new(tx2.clone())].into(),
+            txouts: [].into(),
+            anchors: [(conf_anchor, tx2.compute_txid())].into(),
+            last_seen: [(tx2.clone().compute_txid(), 200)].into(),
+            first_seen: [(tx2.clone().compute_txid(), 160)].into(),
+            last_evicted: [(tx2.clone().compute_txid(), 300)].into(),
+        };
+
+        let keychain_txout_changeset = keychain_txout::ChangeSet {
+            last_revealed: [
+                (descriptor.descriptor_id(), 14),
+            ]
+                .into(),
+            spk_cache: [
+                (
+                    change_descriptor.descriptor_id(),
+                    [
+                        (102u32, ScriptBuf::from_bytes(vec![8, 45, 78])),
+                        (1001u32, ScriptBuf::from_bytes(vec![29, 56, 47])),
+                    ]
+                        .into(),
+                ),
+            ]
+                .into(),
+        };
+
+        let changeset_new = ChangeSet {
+            descriptor: Some(descriptor),
+            change_descriptor: Some(change_descriptor),
+            network: Some(Network::Bitcoin),
+            local_chain: local_chain_changeset,
+            tx_graph: tx_graph_changeset,
+            indexer: keychain_txout_changeset,
+        };
+
+        store.persist_changeset(&changeset_new).unwrap();
+        let mut changeset_read_new = ChangeSet::default();
+        store.read_changeset(&mut changeset_read_new).unwrap();
+        
+        changeset.merge(changeset_new);
+
+        assert_eq!(changeset, changeset_read_new);
+
     }
 }
