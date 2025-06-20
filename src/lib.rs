@@ -150,8 +150,8 @@ impl Store {
     pub fn create_tables<A: AnchorWithMetaData>(&self) -> Result<(), BdkRedbError> {
         let write_tx = self.db.begin_write().map_err(redb::Error::from)?;
 
-        let _ = write_tx.open_table(NETWORK).unwrap();
-        let _ = write_tx.open_table(self.keychains_table_defn()).unwrap();
+        let _ = write_tx.open_table(NETWORK).map_err(redb::Error::from)?;
+        let _ = write_tx.open_table(self.keychains_table_defn()).map_err(redb::Error::from)?;
         write_tx.commit().map_err(redb::Error::from)?;
 
         self.create_local_chain_tables()?;
@@ -165,7 +165,7 @@ impl Store {
     // a new one if it doesn't exist.
     pub fn create_local_chain_tables(&self) -> Result<(), BdkRedbError> {
         let write_tx = self.db.begin_write().map_err(redb::Error::from)?;
-        let _ = write_tx.open_table(self.local_chain_table_defn()).unwrap();
+        let _ = write_tx.open_table(self.local_chain_table_defn()).map_err(redb::Error::from)?;
         write_tx.commit().map_err(redb::Error::from)?;
         Ok(())
     }
@@ -174,12 +174,12 @@ impl Store {
     // a new one if it doesn't exist.
     pub fn create_tx_graph_tables<A: AnchorWithMetaData>(&self) -> Result<(), BdkRedbError> {
         let write_tx = self.db.begin_write().map_err(redb::Error::from)?;
-        let _ = write_tx.open_table(self.txs_table_defn()).unwrap();
-        let _ = write_tx.open_table(self.txouts_table_defn()).unwrap();
-        let _ = write_tx.open_table(self.anchors_table_defn::<A>()).unwrap();
-        let _ = write_tx.open_table(self.last_seen_defn()).unwrap();
-        let _ = write_tx.open_table(self.last_evicted_table_defn()).unwrap();
-        let _ = write_tx.open_table(self.first_seen_table_defn()).unwrap();
+        let _ = write_tx.open_table(self.txs_table_defn()).map_err(redb::Error::from)?;
+        let _ = write_tx.open_table(self.txouts_table_defn()).map_err(redb::Error::from)?;
+        let _ = write_tx.open_table(self.anchors_table_defn::<A>()).map_err(redb::Error::from)?;
+        let _ = write_tx.open_table(self.last_seen_defn()).map_err(redb::Error::from)?;
+        let _ = write_tx.open_table(self.last_evicted_table_defn()).map_err(redb::Error::from)?;
+        let _ = write_tx.open_table(self.first_seen_table_defn()).map_err(redb::Error::from)?;
 
         write_tx.commit().map_err(redb::Error::from)?;
         Ok(())
@@ -189,11 +189,11 @@ impl Store {
     // a new one if it doesn't exist.
     pub fn create_indexer_tables(&self) -> Result<(), BdkRedbError> {
         let write_tx = self.db.begin_write().map_err(redb::Error::from)?;
-        let _ = write_tx.open_table(self.spk_table_defn()).unwrap();
+        let _ = write_tx.open_table(self.spk_table_defn()).map_err(redb::Error::from)?;
 
         let _ = write_tx
             .open_table(self.last_revealed_table_defn())
-            .unwrap();
+            .map_err(redb::Error::from)?;
         write_tx.commit().map_err(redb::Error::from)?;
         Ok(())
     }
