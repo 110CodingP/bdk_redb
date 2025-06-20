@@ -3,13 +3,13 @@ mod error;
 mod wrapper;
 
 use anchor_trait::AnchorWithMetaData;
-use bdk_wallet::{ChangeSet, WalletPersister};
 use bdk_wallet::bitcoin::{self, Network, OutPoint, Txid};
 use bdk_wallet::bitcoin::{BlockHash, ScriptBuf, Transaction, TxOut};
 use bdk_wallet::chain::{
     ConfirmationBlockTime, DescriptorId, keychain_txout, local_chain, tx_graph,
 };
 use bdk_wallet::descriptor::{Descriptor, DescriptorPublicKey};
+use bdk_wallet::{ChangeSet, WalletPersister};
 use error::BdkRedbError;
 use redb::{Database, ReadTransaction, ReadableTable, TableDefinition, WriteTransaction};
 use std::collections::{BTreeMap, BTreeSet};
