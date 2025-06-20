@@ -10,7 +10,7 @@ use bdk_wallet::chain::{
     ConfirmationBlockTime, DescriptorId, keychain_txout, local_chain, tx_graph,
 };
 use bdk_wallet::descriptor::{Descriptor, DescriptorPublicKey};
-use error::{BdkRedbError, MissingError};
+use error::BdkRedbError;
 use redb::{Database, ReadTransaction, ReadableTable, TableDefinition, WriteTransaction};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -561,14 +561,10 @@ impl Store {
         network: &mut Option<bitcoin::Network>,
     ) -> Result<(), BdkRedbError> {
         let table = read_tx.open_table(NETWORK).map_err(redb::Error::from)?;
-        *network = match table.get(&*self.wallet_name).map_err(redb::Error::from)? {
-            Some(network) => Some(Network::from_str(&network.value()).expect("parse network")),
-            None => {
-                return Err(BdkRedbError::DataMissingError(
-                    MissingError::NetworkPersistError,
-                ));
-            }
-        };
+        *network = table
+            .get(&*self.wallet_name)
+            .map_err(redb::Error::from)?
+            .map(|network| Network::from_str(&network.value()).expect("parse network"));
         Ok(())
     }
 
