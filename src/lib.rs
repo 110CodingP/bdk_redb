@@ -3,7 +3,7 @@ mod error;
 mod wrapper;
 
 use anchor_trait::AnchorWithMetaData;
-use bdk_wallet::ChangeSet;
+use bdk_wallet::{ChangeSet, WalletPersister};
 use bdk_wallet::bitcoin::{self, Network, OutPoint, Txid};
 use bdk_wallet::bitcoin::{BlockHash, ScriptBuf, Transaction, TxOut};
 use bdk_wallet::chain::{
@@ -763,6 +763,21 @@ impl Store {
                     entry.as_ref().unwrap().1.value().0,
                 );
         });
+        Ok(())
+    }
+}
+
+impl WalletPersister for Store {
+    type Error = BdkRedbError;
+    fn initialize(persister: &mut Self) -> Result<ChangeSet, Self::Error> {
+        persister.create_tables::<ConfirmationBlockTime>()?;
+        let mut changeset = ChangeSet::default();
+        persister.read_changeset(&mut changeset)?;
+        Ok(changeset)
+    }
+
+    fn persist(persister: &mut Self, changeset: &ChangeSet) -> Result<(), Self::Error> {
+        persister.persist_changeset(changeset)?;
         Ok(())
     }
 }
