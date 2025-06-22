@@ -27,8 +27,8 @@ const NETWORK: TableDefinition<&str, String> = TableDefinition::new("network");
 // This is the primary struct of this crate. It holds the database corresponding to a wallet.
 // It also holds the table names of tables which are specific to each wallet in a database file.
 pub struct Store {
-    db: Database,
-    wallet_name: String,
+    pub db: Database,
+    pub wallet_name: String,
 
     keychain_table_name: String,
     last_revealed_table_name: String,
