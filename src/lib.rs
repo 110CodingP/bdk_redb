@@ -1,5 +1,5 @@
 pub mod anchor_trait;
-mod error;
+pub mod error;
 mod wrapper;
 
 use anchor_trait::AnchorWithMetaData;
