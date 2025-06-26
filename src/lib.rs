@@ -27,8 +27,8 @@ const NETWORK: TableDefinition<&str, String> = TableDefinition::new("network");
 // This is the primary struct of this crate. It holds the database corresponding to a wallet.
 // It also holds the table names of tables which are specific to each wallet in a database file.
 pub struct Store {
-    pub db: Database,
-    pub wallet_name: String,
+    db: Database,
+    wallet_name: String,
 
     keychain_table_name: String,
     last_revealed_table_name: String,
@@ -315,7 +315,7 @@ impl Store {
     }
 
     // This function persists blocks corresponding to a local_chain.
-    pub fn persist_blocks(
+    fn persist_blocks(
         &self,
         write_tx: &WriteTransaction,
         blocks: &BTreeMap<u32, Option<BlockHash>>,
@@ -334,7 +334,7 @@ impl Store {
     }
 
     // This function persists txs corresponding to a tx_graph.
-    pub fn persist_txs(
+    fn persist_txs(
         &self,
         write_tx: &WriteTransaction,
         txs: &BTreeSet<Arc<Transaction>>,
@@ -354,7 +354,7 @@ impl Store {
     }
 
     // This function persists txouts corresponding to a tx_graph.
-    pub fn persist_txouts(
+    fn persist_txouts(
         &self,
         write_tx: &WriteTransaction,
         txouts: &BTreeMap<OutPoint, TxOut>,
@@ -377,7 +377,7 @@ impl Store {
     }
 
     // This function persists anchors corresponding to a tx_graph.
-    pub fn persist_anchors<A: AnchorWithMetaData>(
+    fn persist_anchors<A: AnchorWithMetaData>(
         &self,
         write_tx: &WriteTransaction,
         read_tx: &ReadTransaction,
@@ -405,7 +405,7 @@ impl Store {
     }
 
     // This function persists last_seen flags corresponding to a tx_graph.
-    pub fn persist_last_seen(
+    fn persist_last_seen(
         &self,
         write_tx: &WriteTransaction,
         read_tx: &ReadTransaction,
@@ -428,7 +428,7 @@ impl Store {
     }
 
     // This function persists last_evicted flags corresponding to a tx_graph .
-    pub fn persist_last_evicted(
+    fn persist_last_evicted(
         &self,
         write_tx: &WriteTransaction,
         read_tx: &ReadTransaction,
@@ -447,7 +447,7 @@ impl Store {
     }
 
     // This function persists first_seen flags corresponding to a tx_graph .
-    pub fn persist_first_seen(
+    fn persist_first_seen(
         &self,
         write_tx: &WriteTransaction,
         read_tx: &ReadTransaction,
@@ -466,7 +466,7 @@ impl Store {
     }
 
     // This function persists last_revealed corresponding to keychain_txout .
-    pub fn persist_last_revealed(
+    fn persist_last_revealed(
         &self,
         write_tx: &WriteTransaction,
         last_revealed: &BTreeMap<DescriptorId, u32>,
@@ -481,7 +481,7 @@ impl Store {
     }
 
     // This function persists spk_cache corresponding to keychain_txout .
-    pub fn persist_spks(
+    fn persist_spks(
         &self,
         write_tx: &WriteTransaction,
         spk_cache: &BTreeMap<DescriptorId, BTreeMap<u32, ScriptBuf>>,
@@ -598,7 +598,7 @@ impl Store {
     }
 
     // This function loads blocks corresponding to local_chain .
-    pub fn read_blocks(
+    fn read_blocks(
         &self,
         read_tx: &ReadTransaction,
         blocks: &mut BTreeMap<u32, Option<BlockHash>>,
@@ -618,7 +618,7 @@ impl Store {
     }
 
     // This function loads txs corresponding to tx_graph.
-    pub fn read_txs(
+    fn read_txs(
         &self,
         read_tx: &ReadTransaction,
         txs: &mut BTreeSet<Arc<Transaction>>,
@@ -631,7 +631,7 @@ impl Store {
     }
 
     // This function loads txouts corresponding to tx_graph.
-    pub fn read_txouts(
+    fn read_txouts(
         &self,
         read_tx: &ReadTransaction,
         txouts: &mut BTreeMap<OutPoint, TxOut>,
@@ -653,7 +653,7 @@ impl Store {
     }
 
     // This function loads anchors corresponding to tx_graph.
-    pub fn read_anchors<A: AnchorWithMetaData>(
+    fn read_anchors<A: AnchorWithMetaData>(
         &self,
         read_tx: &ReadTransaction,
         anchors: &mut BTreeSet<(A, Txid)>,
@@ -674,7 +674,7 @@ impl Store {
     }
 
     // This function loads last_seen flags corresponding to tx_graph.
-    pub fn read_last_seen(
+    fn read_last_seen(
         &self,
         read_tx: &ReadTransaction,
         last_seen: &mut BTreeMap<Txid, u64>,
@@ -692,7 +692,7 @@ impl Store {
     }
 
     // This function loads last_evicted flags corresponding to tx_graph .
-    pub fn read_last_evicted(
+    fn read_last_evicted(
         &self,
         read_tx: &ReadTransaction,
         last_evicted: &mut BTreeMap<Txid, u64>,
@@ -710,7 +710,7 @@ impl Store {
     }
 
     // This function loads first_seen flags corresponding to tx_graph.
-    pub fn read_first_seen(
+    fn read_first_seen(
         &self,
         read_tx: &ReadTransaction,
         first_seen: &mut BTreeMap<Txid, u64>,
@@ -728,7 +728,7 @@ impl Store {
     }
 
     // This function loads last_revealed corresponding to keychain_txout .
-    pub fn read_last_revealed(
+    fn read_last_revealed(
         &self,
         read_tx: &ReadTransaction,
         last_revealed: &mut BTreeMap<DescriptorId, u32>,
@@ -746,7 +746,7 @@ impl Store {
     }
 
     // This function loads spk_cache corresponding to keychain_txout .
-    pub fn read_spks(
+    fn read_spks(
         &self,
         read_tx: &ReadTransaction,
         spk_cache: &mut BTreeMap<DescriptorId, BTreeMap<u32, ScriptBuf>>,
