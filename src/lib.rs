@@ -32,7 +32,7 @@ pub struct Store {
 
     keychain_table_name: String,
     last_revealed_table_name: String,
-    local_chain_table_name: String,
+    blocks_table_name: String,
     txouts_table_name: String,
     last_seen_table_name: String,
     txs_table_name: String,
@@ -50,8 +50,8 @@ impl Store {
     }
 
     // This table stores (height, BlockHash) pairs on a high level.
-    fn local_chain_table_defn(&self) -> TableDefinition<u32, BlockHashWrapper> {
-        TableDefinition::new(&self.local_chain_table_name)
+    fn blocks_table_defn(&self) -> TableDefinition<u32, BlockHashWrapper> {
+        TableDefinition::new(&self.blocks_table_name)
     }
 
     // This table stores (height, BlockHash) pairs on a high level.
@@ -112,8 +112,8 @@ impl Store {
         // Create table names to be stored in the Store.
         let mut keychain_table_name = wallet_name.clone();
         keychain_table_name.push_str("_keychain");
-        let mut local_chain_table_name = wallet_name.clone();
-        local_chain_table_name.push_str("_local_chain");
+        let mut blocks_table_name = wallet_name.clone();
+        blocks_table_name.push_str("_blocks");
         let mut txs_table_name = wallet_name.clone();
         txs_table_name.push_str("_txs");
         let mut txouts_table_name = wallet_name.clone();
@@ -134,7 +134,7 @@ impl Store {
             db,
             wallet_name,
             keychain_table_name,
-            local_chain_table_name,
+            blocks_table_name,
             txs_table_name,
             txouts_table_name,
             anchors_table_name,
@@ -168,7 +168,7 @@ impl Store {
     pub fn create_local_chain_tables(&self) -> Result<(), BdkRedbError> {
         let write_tx = self.db.begin_write().map_err(redb::Error::from)?;
         let _ = write_tx
-            .open_table(self.local_chain_table_defn())
+            .open_table(self.blocks_table_defn())
             .map_err(redb::Error::from)?;
         write_tx.commit().map_err(redb::Error::from)?;
         Ok(())
@@ -338,7 +338,7 @@ impl Store {
         blocks: &BTreeMap<u32, Option<BlockHash>>,
     ) -> Result<(), BdkRedbError> {
         let mut table = write_tx
-            .open_table(self.local_chain_table_defn())
+            .open_table(self.blocks_table_defn())
             .map_err(redb::Error::from)?;
         for (ht, hash) in blocks {
             match hash {
@@ -616,7 +616,7 @@ impl Store {
         blocks: &mut BTreeMap<u32, Option<BlockHash>>,
     ) -> Result<(), BdkRedbError> {
         let table = read_tx
-            .open_table(self.local_chain_table_defn())
+            .open_table(self.blocks_table_defn())
             .map_err(redb::Error::from)
             .unwrap();
 
@@ -947,7 +947,7 @@ mod test {
         blocks.insert(2u32, Some(hash!("K")));
 
         let write_tx = store.db.begin_write().unwrap();
-        let _ = write_tx.open_table(store.local_chain_table_defn()).unwrap();
+        let _ = write_tx.open_table(store.blocks_table_defn()).unwrap();
         store.persist_blocks(&write_tx, &blocks).unwrap();
         write_tx.commit().unwrap();
         let read_tx = store.db.begin_read().unwrap();
