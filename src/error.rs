@@ -10,5 +10,5 @@ pub enum BdkRedbError {
     #[error("Deserialization error: {0}")]
     Deser(#[from] ciborium::de::Error::<IoError>),
     #[error("Deserialization error: {0}")]
-    BlockHashFromSlice(#[from] bdk_wallet::bitcoin::hashes::FromSliceError)
+    BlockHashFromSlice(#[from] bdk_chain::bitcoin::hashes::FromSliceError)
 }

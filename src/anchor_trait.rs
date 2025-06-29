@@ -1,4 +1,4 @@
-use bdk_wallet::chain::{Anchor, BlockId, ConfirmationBlockTime};
+use bdk_chain::{Anchor, BlockId, ConfirmationBlockTime};
 use redb::Value;
 
 // A trait that provides metadata corresponding to an anchor. In case of ConfirmationBlockTime

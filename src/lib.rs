@@ -2,18 +2,22 @@ pub mod anchor_trait;
 pub mod error;
 
 use anchor_trait::AnchorWithMetaData;
-use bdk_wallet::bitcoin::{self, Network, OutPoint, Txid};
-use bdk_wallet::bitcoin::{Amount, BlockHash, ScriptBuf, Transaction, TxOut, hashes::Hash};
-use bdk_wallet::chain::{
-    BlockId, ConfirmationBlockTime, DescriptorId, keychain_txout, local_chain, tx_graph,
+use bdk_chain::bitcoin::{self, Network, OutPoint, Txid, Transaction};
+use bdk_chain::bitcoin::{Amount, BlockHash, ScriptBuf, TxOut, hashes::Hash};
+use bdk_chain::{
+    BlockId, DescriptorId, keychain_txout, local_chain, tx_graph
 };
-use bdk_wallet::descriptor::{Descriptor, DescriptorPublicKey};
+use bdk_chain::miniscript::descriptor::{Descriptor, DescriptorPublicKey};
+#[cfg(feature = "wallet")]
 use bdk_wallet::{ChangeSet, WalletPersister};
 use error::BdkRedbError;
 use redb::{Database, ReadTransaction, ReadableTable, TableDefinition, WriteTransaction};
 use std::collections::{BTreeMap, BTreeSet};
 use std::str::FromStr;
 use std::sync::Arc;
+
+#[cfg(feature = "wallet")]
+use bdk_chain::ConfirmationBlockTime;
 
 // The following table stores (wallet_name, network) pairs. This is common to all wallets in
 // a database file.
@@ -220,6 +224,7 @@ impl<'db> Store<'db> {
         Ok(())
     }
 
+    #[cfg(feature = "wallet")]
     // This function persists `bdk_wallet::Changeset` into our db. It persists each field by calling
     // corresponding persistence functions.
     pub fn persist_changeset(&self, changeset: &ChangeSet) -> Result<(), BdkRedbError> {
@@ -544,6 +549,7 @@ impl<'db> Store<'db> {
         Ok(())
     }
 
+    #[cfg(feature = "wallet")]
     // This function loads `bdk_wallet::Changeset` from db. It calls the corresponding load
     // functions for each of its fields.
     pub fn read_changeset(&self, changeset: &mut ChangeSet) -> Result<(), BdkRedbError> {
@@ -822,6 +828,7 @@ impl<'db> Store<'db> {
     }
 }
 
+#[cfg(feature = "wallet")]
 impl WalletPersister for Store<'_> {
     type Error = BdkRedbError;
     fn initialize(persister: &mut Self) -> Result<ChangeSet, Self::Error> {
@@ -840,19 +847,21 @@ impl WalletPersister for Store<'_> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use bdk_wallet::chain::BlockId;
-    use bdk_wallet::{
+    use bdk_chain::BlockId;
+    use bdk_chain::{
         bitcoin::{
             self, Amount, BlockHash, OutPoint, ScriptBuf, Transaction, TxIn, TxOut, absolute,
             hashes::Hash, transaction, transaction::Txid,
         },
-        chain::{DescriptorExt, Merge, keychain_txout, local_chain},
-        descriptor::Descriptor,
-        keys::DescriptorPublicKey,
+        DescriptorExt, Merge, keychain_txout, local_chain,
+        miniscript::descriptor::Descriptor,
     };
+    #[cfg(feature = "wallet")]
+    use bdk_wallet::keys::DescriptorPublicKey;
     use std::sync::Arc;
     use std::{collections::BTreeMap, path::Path};
     use tempfile::NamedTempFile;
+    use bdk_chain::ConfirmationBlockTime;
 
     const DESCRIPTORS: [&str; 2] = [
         "tr([5940b9b9/86'/0'/0']tpubDDVNqmq75GNPWQ9UNKfP43UwjaHU4GYfoPavojQbfpyfZp2KetWgjGBRRAy4tYCrAA6SB11mhQAkqxjh1VtQHyKwT4oYxpwLaGHvoKmtxZf/0/*)#44aqnlam",
@@ -1691,6 +1700,7 @@ mod test {
         assert_eq!(changeset_new, keychain_txout_changeset);
     }
 
+    #[cfg(feature = "wallet")]
     #[test]
     fn test_persist_changeset() {
         let tmpfile = NamedTempFile::new().unwrap();
