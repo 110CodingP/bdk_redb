@@ -1,12 +1,11 @@
 pub mod anchor_trait;
 pub mod error;
-mod wrapper;
 
 use anchor_trait::AnchorWithMetaData;
 use bdk_wallet::bitcoin::{self, Network, OutPoint, Txid};
-use bdk_wallet::bitcoin::{BlockHash, ScriptBuf, Transaction, TxOut};
+use bdk_wallet::bitcoin::{Amount, BlockHash, ScriptBuf, Transaction, TxOut, hashes::Hash};
 use bdk_wallet::chain::{
-    ConfirmationBlockTime, DescriptorId, keychain_txout, local_chain, tx_graph,
+    BlockId, ConfirmationBlockTime, DescriptorId, keychain_txout, local_chain, tx_graph,
 };
 use bdk_wallet::descriptor::{Descriptor, DescriptorPublicKey};
 use bdk_wallet::{ChangeSet, WalletPersister};
@@ -15,10 +14,6 @@ use redb::{Database, ReadTransaction, ReadableTable, TableDefinition, WriteTrans
 use std::collections::{BTreeMap, BTreeSet};
 use std::str::FromStr;
 use std::sync::Arc;
-use wrapper::{
-    AmountWrapper, BlockHashWrapper, BlockIdWrapper, DIDWrapper, ScriptWrapper, TransactionWrapper,
-    TxidWrapper,
-};
 
 // The following table stores (wallet_name, network) pairs. This is common to all wallets in
 // a database file.
@@ -50,19 +45,17 @@ impl<'db> Store<'db> {
     }
 
     // This table stores (height, BlockHash) pairs on a high level.
-    fn blocks_table_defn(&self) -> TableDefinition<u32, BlockHashWrapper> {
+    fn blocks_table_defn(&self) -> TableDefinition<u32, [u8; 32]> {
         TableDefinition::new(&self.blocks_table_name)
     }
 
     // This table stores (height, BlockHash) pairs on a high level.
-    fn txs_table_defn(&self) -> TableDefinition<TxidWrapper, TransactionWrapper> {
+    fn txs_table_defn(&self) -> TableDefinition<[u8; 32], Vec<u8>> {
         TableDefinition::new(&self.txs_table_name)
     }
 
     // This table stores (Outpoint, TxOut) pairs on a high level.
-    fn txouts_table_defn(
-        &self,
-    ) -> TableDefinition<(TxidWrapper, u32), (AmountWrapper, ScriptWrapper)> {
+    fn txouts_table_defn(&self) -> TableDefinition<([u8; 32], u32), (u64, Vec<u8>)> {
         TableDefinition::new(&self.txouts_table_name)
     }
 
@@ -73,32 +66,32 @@ impl<'db> Store<'db> {
     // (in different chains ) and a Block can anchor multiple transactions.
     fn anchors_table_defn<A: AnchorWithMetaData>(
         &self,
-    ) -> TableDefinition<(TxidWrapper, BlockIdWrapper), A::MetaDataType> {
+    ) -> TableDefinition<([u8; 32], [u8; 36]), A::MetaDataType> {
         TableDefinition::new(&self.anchors_table_name)
     }
 
     // This table stores (Txid, last_seen) pairs on a high level.
-    fn last_seen_defn(&self) -> TableDefinition<TxidWrapper, u64> {
+    fn last_seen_defn(&self) -> TableDefinition<[u8; 32], u64> {
         TableDefinition::new(&self.last_seen_table_name)
     }
 
     // This table stores (Txid, last_evicted) pairs on a high level.
-    fn last_evicted_table_defn(&self) -> TableDefinition<TxidWrapper, u64> {
+    fn last_evicted_table_defn(&self) -> TableDefinition<[u8; 32], u64> {
         TableDefinition::new(&self.last_evicted_table_name)
     }
 
     // This table stores (Txid, first_seen) pairs on a high level.
-    fn first_seen_table_defn(&self) -> TableDefinition<TxidWrapper, u64> {
+    fn first_seen_table_defn(&self) -> TableDefinition<[u8; 32], u64> {
         TableDefinition::new(&self.first_seen_table_name)
     }
 
     // This table stores (DescriptorId, last_revealed_index) pairs on a high level.
-    fn last_revealed_table_defn(&self) -> TableDefinition<DIDWrapper, u32> {
+    fn last_revealed_table_defn(&self) -> TableDefinition<[u8; 32], u32> {
         TableDefinition::new(&self.last_revealed_table_name)
     }
 
     // This table stores ((DescriptorId, index), ScriptPubKey) pairs on a high level.
-    fn spk_table_defn(&self) -> TableDefinition<(DIDWrapper, u32), ScriptWrapper> {
+    fn spk_table_defn(&self) -> TableDefinition<([u8; 32], u32), Vec<u8>> {
         TableDefinition::new(&self.spk_table_name)
     }
 
@@ -340,8 +333,8 @@ impl<'db> Store<'db> {
             .map_err(redb::Error::from)?;
         for (ht, hash) in blocks {
             match hash {
-                Some(hash) => table
-                    .insert(*ht, BlockHashWrapper(*hash))
+                &Some(hash) => table
+                    .insert(*ht, hash.to_byte_array())
                     .map_err(redb::Error::from)?,
                 // remove the block if hash is None
                 // assuming it is guaranteed that (ht, None) => there is an entry of form (ht,_) in the Table.
@@ -361,11 +354,10 @@ impl<'db> Store<'db> {
             .open_table(self.txs_table_defn())
             .map_err(redb::Error::from)?;
         for tx in txs {
+            let mut vec: Vec<u8> = Vec::new();
+            ciborium::into_writer(tx, &mut vec).unwrap();
             table
-                .insert(
-                    TxidWrapper(tx.compute_txid()),
-                    TransactionWrapper((**tx).clone()),
-                )
+                .insert(tx.compute_txid().to_byte_array(), vec)
                 .map_err(redb::Error::from)?;
         }
         Ok(())
@@ -383,10 +375,10 @@ impl<'db> Store<'db> {
         for (outpoint, txout) in txouts {
             table
                 .insert(
-                    (TxidWrapper(outpoint.txid), outpoint.vout),
+                    (outpoint.txid.to_byte_array(), outpoint.vout),
                     (
-                        AmountWrapper(txout.value),
-                        ScriptWrapper(txout.script_pubkey.clone()),
+                        txout.value.to_sat(),
+                        txout.script_pubkey.clone().into_bytes(),
                     ),
                 )
                 .map_err(redb::Error::from)?;
@@ -411,15 +403,16 @@ impl<'db> Store<'db> {
             // if the corresponding txn exists in Txs table (trying to imitate the
             // referential behavior in case of sqlite)
             if txs_table
-                .get(TxidWrapper(*txid))
+                .get(txid.to_byte_array())
                 .map_err(redb::Error::from)?
                 .is_some()
             {
+                let mut bytes: [u8; 36] = [0; 36];
+                let anchor_block = anchor.anchor_block();
+                bytes[0..4].copy_from_slice(&anchor_block.height.to_le_bytes());
+                bytes[4..].copy_from_slice(&anchor_block.hash.to_byte_array());
                 table
-                    .insert(
-                        (TxidWrapper(*txid), BlockIdWrapper(anchor.anchor_block())),
-                        &anchor.metadata(),
-                    )
+                    .insert((txid.to_byte_array(), bytes), &anchor.metadata())
                     .map_err(redb::Error::from)?;
             }
         }
@@ -443,12 +436,12 @@ impl<'db> Store<'db> {
             // if the corresponding txn exists in Txs table (trying to duplicate the
             // referential behavior in case of sqlite)
             if txs_table
-                .get(TxidWrapper(*txid))
+                .get(txid.to_byte_array())
                 .map_err(redb::Error::from)?
                 .is_some()
             {
                 table
-                    .insert(TxidWrapper(*txid), *last_seen_time)
+                    .insert(txid.to_byte_array(), *last_seen_time)
                     .map_err(redb::Error::from)?;
             }
         }
@@ -472,12 +465,12 @@ impl<'db> Store<'db> {
             // if the corresponding txn exists in Txs table (trying to duplicate the
             // referential behavior in case of sqlite)
             if txs_table
-                .get(TxidWrapper(*tx))
+                .get(tx.to_byte_array())
                 .map_err(redb::Error::from)?
                 .is_some()
             {
                 table
-                    .insert(TxidWrapper(*tx), last_evicted_time)
+                    .insert(tx.to_byte_array(), last_evicted_time)
                     .map_err(redb::Error::from)?;
             }
         }
@@ -501,12 +494,12 @@ impl<'db> Store<'db> {
             // if the corresponding txn exists in Txs table (trying to duplicate the
             // referential behavior in case of sqlite)
             if txs_table
-                .get(TxidWrapper(*tx))
+                .get(tx.to_byte_array())
                 .map_err(redb::Error::from)?
                 .is_some()
             {
                 table
-                    .insert(TxidWrapper(*tx), first_seen_time)
+                    .insert(tx.to_byte_array(), first_seen_time)
                     .map_err(redb::Error::from)?;
             }
         }
@@ -522,9 +515,9 @@ impl<'db> Store<'db> {
         let mut table = write_tx
             .open_table(self.last_revealed_table_defn())
             .map_err(redb::Error::from)?;
-        for (desc, idx) in last_revealed {
+        for (&desc, &idx) in last_revealed {
             table
-                .insert(DIDWrapper(*desc), idx)
+                .insert(desc.to_byte_array(), idx)
                 .map_err(redb::Error::from)?;
         }
         Ok(())
@@ -539,14 +532,11 @@ impl<'db> Store<'db> {
         let mut table = write_tx
             .open_table(self.spk_table_defn())
             .map_err(redb::Error::from)?;
-        for (desc, map) in spk_cache {
+        for (&desc, map) in spk_cache {
             map.iter()
                 .try_for_each(|entry| {
                     table
-                        .insert(
-                            (DIDWrapper(*desc), *entry.0),
-                            ScriptWrapper((*entry.1).clone()),
-                        )
+                        .insert((desc.to_byte_array(), *entry.0), entry.1.to_bytes())
                         .map(|_| ())
                 })
                 .map_err(redb::Error::from)?;
@@ -657,7 +647,10 @@ impl<'db> Store<'db> {
 
         for entry in table.iter().map_err(redb::Error::from)? {
             let (height, hash) = entry.map_err(redb::Error::from)?;
-            blocks.insert(height.value(), Some(hash.value().0));
+            blocks.insert(
+                height.value(),
+                Some(BlockHash::from_byte_array(hash.value())),
+            );
         }
 
         Ok(())
@@ -674,7 +667,9 @@ impl<'db> Store<'db> {
             .map_err(redb::Error::from)?;
 
         for entry in table.iter().map_err(redb::Error::from)? {
-            txs.insert(Arc::new(entry.map_err(redb::Error::from)?.1.value().0));
+            let tx_vec = entry.map_err(redb::Error::from)?.1.value();
+            let tx = ciborium::from_reader(tx_vec.as_slice()).unwrap();
+            txs.insert(Arc::new(tx));
         }
         Ok(())
     }
@@ -693,12 +688,12 @@ impl<'db> Store<'db> {
             let (outpoint, txout) = entry.map_err(redb::Error::from)?;
             txouts.insert(
                 OutPoint {
-                    txid: outpoint.value().0.0,
+                    txid: Txid::from_byte_array(outpoint.value().0),
                     vout: outpoint.value().1,
                 },
                 TxOut {
-                    value: txout.value().0.0,
-                    script_pubkey: txout.value().1.0,
+                    value: Amount::from_sat(txout.value().0),
+                    script_pubkey: ScriptBuf::from_bytes(txout.value().1),
                 },
             );
         }
@@ -718,9 +713,14 @@ impl<'db> Store<'db> {
 
         for entry in table.iter().map_err(redb::Error::from)? {
             let (anchor, metadata) = entry.map_err(redb::Error::from)?;
+            let (txid_bytes, block_id_bytes) = anchor.value();
+            let block_id = BlockId {
+                height: u32::from_le_bytes(block_id_bytes[0..4].try_into().unwrap()),
+                hash: BlockHash::from_slice(&block_id_bytes[4..]).unwrap(),
+            };
             anchors.insert((
-                A::from_id(anchor.value().1.0, metadata.value()),
-                anchor.value().0.0,
+                A::from_id(block_id, metadata.value()),
+                Txid::from_byte_array(txid_bytes),
             ));
         }
 
@@ -739,7 +739,7 @@ impl<'db> Store<'db> {
 
         for entry in table.iter().map_err(redb::Error::from)? {
             let (txid, last_seen_num) = entry.map_err(redb::Error::from)?;
-            last_seen.insert(txid.value().0, last_seen_num.value());
+            last_seen.insert(Txid::from_byte_array(txid.value()), last_seen_num.value());
         }
         Ok(())
     }
@@ -756,7 +756,10 @@ impl<'db> Store<'db> {
 
         for entry in table.iter().map_err(redb::Error::from)? {
             let (txid, last_evicted_num) = entry.map_err(redb::Error::from)?;
-            last_evicted.insert(txid.value().0, last_evicted_num.value());
+            last_evicted.insert(
+                Txid::from_byte_array(txid.value()),
+                last_evicted_num.value(),
+            );
         }
         Ok(())
     }
@@ -773,7 +776,7 @@ impl<'db> Store<'db> {
 
         for entry in table.iter().map_err(redb::Error::from)? {
             let (txid, first_seen_num) = entry.map_err(redb::Error::from)?;
-            first_seen.insert(txid.value().0, first_seen_num.value());
+            first_seen.insert(Txid::from_byte_array(txid.value()), first_seen_num.value());
         }
         Ok(())
     }
@@ -790,7 +793,10 @@ impl<'db> Store<'db> {
 
         for entry in table.iter().map_err(redb::Error::from)? {
             let (desc, last_revealed_idx) = entry.map_err(redb::Error::from)?;
-            last_revealed.insert(desc.value().0, last_revealed_idx.value());
+            last_revealed.insert(
+                DescriptorId::from_byte_array(desc.value()),
+                last_revealed_idx.value(),
+            );
         }
         Ok(())
     }
@@ -808,9 +814,9 @@ impl<'db> Store<'db> {
         for entry in table.iter().map_err(redb::Error::from)? {
             let (desc, spk) = entry.map_err(redb::Error::from)?;
             spk_cache
-                .entry(desc.value().0.0)
+                .entry(DescriptorId::from_byte_array(desc.value().0))
                 .or_default()
-                .insert(desc.value().1, spk.value().0);
+                .insert(desc.value().1, ScriptBuf::from_bytes(spk.value()));
         }
         Ok(())
     }
