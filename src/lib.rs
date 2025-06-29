@@ -616,7 +616,7 @@ impl<'db> Store<'db> {
             desc_changeset.insert(
                 label.value(),
                 Descriptor::<DescriptorPublicKey>::from_str(keychain.value().as_str())
-                    .expect("parse descriptors"),
+                    .expect("should be valid descriptors"),
             );
         }
 
@@ -630,7 +630,7 @@ impl<'db> Store<'db> {
         *network = table
             .get(&*self.wallet_name)
             .map_err(redb::Error::from)?
-            .map(|network| Network::from_str(&network.value()).expect("parse network"));
+            .map(|network| Network::from_str(&network.value()).expect("should be valid network"));
         Ok(())
     }
 
