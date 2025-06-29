@@ -251,17 +251,17 @@ impl<'db> Store<'db> {
         &self,
         changeset: &tx_graph::ChangeSet<A>,
     ) -> Result<(), BdkRedbError> {
-        let write_tx = self.db.begin_write().unwrap();
+        let write_tx = self.db.begin_write().map_err(redb::Error::from)?;
         self.persist_txs(&write_tx, &changeset.txs)?;
         self.persist_txouts(&write_tx, &changeset.txouts)?;
-        write_tx.commit().unwrap();
-        let write_tx = self.db.begin_write().unwrap();
-        let read_tx = self.db.begin_read().unwrap();
+        write_tx.commit().map_err(redb::Error::from)?;
+        let write_tx = self.db.begin_write().map_err(redb::Error::from)?;
+        let read_tx = self.db.begin_read().map_err(redb::Error::from)?;
         self.persist_anchors::<A>(&write_tx, &read_tx, &changeset.anchors)?;
         self.persist_last_seen(&write_tx, &read_tx, &changeset.last_seen)?;
         self.persist_last_evicted(&write_tx, &read_tx, &changeset.last_evicted)?;
         self.persist_first_seen(&write_tx, &read_tx, &changeset.first_seen)?;
-        write_tx.commit().unwrap();
+        write_tx.commit().map_err(redb::Error::from)?;
         Ok(())
     }
 
@@ -271,11 +271,10 @@ impl<'db> Store<'db> {
         &self,
         changeset: &keychain_txout::ChangeSet,
     ) -> Result<(), BdkRedbError> {
-        let write_tx = self.db.begin_write().unwrap();
-        self.persist_last_revealed(&write_tx, &changeset.last_revealed)
-            .unwrap();
-        self.persist_spks(&write_tx, &changeset.spk_cache).unwrap();
-        write_tx.commit().unwrap();
+        let write_tx = self.db.begin_write().map_err(redb::Error::from)?;
+        self.persist_last_revealed(&write_tx, &changeset.last_revealed)?;
+        self.persist_spks(&write_tx, &changeset.spk_cache)?;
+        write_tx.commit().map_err(redb::Error::from)?;
         Ok(())
     }
 
@@ -285,7 +284,7 @@ impl<'db> Store<'db> {
         // maps label to descriptor
         changeset: &BTreeMap<u64, Descriptor<DescriptorPublicKey>>,
     ) -> Result<(), BdkRedbError> {
-        let write_tx = self.db.begin_write().unwrap();
+        let write_tx = self.db.begin_write().map_err(redb::Error::from)?;
         {
             let mut table = write_tx
                 .open_table(self.keychains_table_defn())
@@ -293,24 +292,28 @@ impl<'db> Store<'db> {
 
             // assuming descriptors corresponding to a label(keychain) are never modified.
             for (label, desc) in changeset {
-                table.insert(label, desc.to_string()).unwrap();
+                table
+                    .insert(label, desc.to_string())
+                    .map_err(redb::Error::from)?;
             }
         }
-        write_tx.commit().unwrap();
+        write_tx.commit().map_err(redb::Error::from)?;
         Ok(())
     }
 
     // This function persists the network into our db.
     pub fn persist_network(&self, network: &Option<bitcoin::Network>) -> Result<(), BdkRedbError> {
-        let write_tx = self.db.begin_write().unwrap();
+        let write_tx = self.db.begin_write().map_err(redb::Error::from)?;
         {
             let mut table = write_tx.open_table(NETWORK).map_err(redb::Error::from)?;
             // assuming network will be persisted once and only once
             if let Some(network) = network {
-                let _ = table.insert(&*self.wallet_name, network.to_string());
+                table
+                    .insert(&*self.wallet_name, network.to_string())
+                    .map_err(redb::Error::from)?;
             }
         }
-        write_tx.commit().unwrap();
+        write_tx.commit().map_err(redb::Error::from)?;
         Ok(())
     }
 
@@ -320,9 +323,9 @@ impl<'db> Store<'db> {
         &self,
         changeset: &local_chain::ChangeSet,
     ) -> Result<(), BdkRedbError> {
-        let write_tx = self.db.begin_write().unwrap();
-        self.persist_blocks(&write_tx, &changeset.blocks).unwrap();
-        write_tx.commit().unwrap();
+        let write_tx = self.db.begin_write().map_err(redb::Error::from)?;
+        self.persist_blocks(&write_tx, &changeset.blocks)?;
+        write_tx.commit().map_err(redb::Error::from)?;
         Ok(())
     }
 
@@ -337,9 +340,12 @@ impl<'db> Store<'db> {
             .map_err(redb::Error::from)?;
         for (ht, hash) in blocks {
             match hash {
-                Some(hash) => table.insert(*ht, BlockHashWrapper(*hash)).unwrap(),
+                Some(hash) => table
+                    .insert(*ht, BlockHashWrapper(*hash))
+                    .map_err(redb::Error::from)?,
                 // remove the block if hash is None
-                None => table.remove(*ht).unwrap(),
+                // assuming it is guaranteed that (ht, None) => there is an entry of form (ht,_) in the Table.
+                None => table.remove(*ht).map_err(redb::Error::from)?,
             };
         }
         Ok(())
@@ -360,7 +366,7 @@ impl<'db> Store<'db> {
                     TxidWrapper(tx.compute_txid()),
                     TransactionWrapper((**tx).clone()),
                 )
-                .unwrap();
+                .map_err(redb::Error::from)?;
         }
         Ok(())
     }
@@ -383,7 +389,7 @@ impl<'db> Store<'db> {
                         ScriptWrapper(txout.script_pubkey.clone()),
                     ),
                 )
-                .unwrap();
+                .map_err(redb::Error::from)?;
         }
         Ok(())
     }
@@ -404,13 +410,17 @@ impl<'db> Store<'db> {
         for (anchor, txid) in anchors {
             // if the corresponding txn exists in Txs table (trying to imitate the
             // referential behavior in case of sqlite)
-            if txs_table.get(TxidWrapper(*txid)).unwrap().is_some() {
+            if txs_table
+                .get(TxidWrapper(*txid))
+                .map_err(redb::Error::from)?
+                .is_some()
+            {
                 table
                     .insert(
                         (TxidWrapper(*txid), BlockIdWrapper(anchor.anchor_block())),
                         &anchor.metadata(),
                     )
-                    .unwrap();
+                    .map_err(redb::Error::from)?;
             }
         }
         Ok(())
@@ -432,8 +442,14 @@ impl<'db> Store<'db> {
         for (txid, last_seen_time) in last_seen {
             // if the corresponding txn exists in Txs table (trying to duplicate the
             // referential behavior in case of sqlite)
-            if txs_table.get(TxidWrapper(*txid)).unwrap().is_some() {
-                table.insert(TxidWrapper(*txid), *last_seen_time).unwrap();
+            if txs_table
+                .get(TxidWrapper(*txid))
+                .map_err(redb::Error::from)?
+                .is_some()
+            {
+                table
+                    .insert(TxidWrapper(*txid), *last_seen_time)
+                    .map_err(redb::Error::from)?;
             }
         }
         Ok(())
@@ -446,13 +462,23 @@ impl<'db> Store<'db> {
         read_tx: &ReadTransaction,
         last_evicted: &BTreeMap<Txid, u64>,
     ) -> Result<(), BdkRedbError> {
-        let mut table = write_tx.open_table(self.last_evicted_table_defn()).unwrap();
-        let txs_table = read_tx.open_table(self.txs_table_defn()).unwrap();
+        let mut table = write_tx
+            .open_table(self.last_evicted_table_defn())
+            .map_err(redb::Error::from)?;
+        let txs_table = read_tx
+            .open_table(self.txs_table_defn())
+            .map_err(redb::Error::from)?;
         for (tx, last_evicted_time) in last_evicted {
             // if the corresponding txn exists in Txs table (trying to duplicate the
             // referential behavior in case of sqlite)
-            if txs_table.get(TxidWrapper(*tx)).unwrap().is_some() {
-                table.insert(TxidWrapper(*tx), last_evicted_time).unwrap();
+            if txs_table
+                .get(TxidWrapper(*tx))
+                .map_err(redb::Error::from)?
+                .is_some()
+            {
+                table
+                    .insert(TxidWrapper(*tx), last_evicted_time)
+                    .map_err(redb::Error::from)?;
             }
         }
         Ok(())
@@ -465,13 +491,23 @@ impl<'db> Store<'db> {
         read_tx: &ReadTransaction,
         first_seen: &BTreeMap<Txid, u64>,
     ) -> Result<(), BdkRedbError> {
-        let mut table = write_tx.open_table(self.first_seen_table_defn()).unwrap();
-        let txs_table = read_tx.open_table(self.txs_table_defn()).unwrap();
+        let mut table = write_tx
+            .open_table(self.first_seen_table_defn())
+            .map_err(redb::Error::from)?;
+        let txs_table = read_tx
+            .open_table(self.txs_table_defn())
+            .map_err(redb::Error::from)?;
         for (tx, first_seen_time) in first_seen {
             // if the corresponding txn exists in Txs table (trying to duplicate the
             // referential behavior in case of sqlite)
-            if txs_table.get(TxidWrapper(*tx)).unwrap().is_some() {
-                table.insert(TxidWrapper(*tx), first_seen_time).unwrap();
+            if txs_table
+                .get(TxidWrapper(*tx))
+                .map_err(redb::Error::from)?
+                .is_some()
+            {
+                table
+                    .insert(TxidWrapper(*tx), first_seen_time)
+                    .map_err(redb::Error::from)?;
             }
         }
         Ok(())
@@ -487,7 +523,9 @@ impl<'db> Store<'db> {
             .open_table(self.last_revealed_table_defn())
             .map_err(redb::Error::from)?;
         for (desc, idx) in last_revealed {
-            table.insert(DIDWrapper(*desc), idx).unwrap();
+            table
+                .insert(DIDWrapper(*desc), idx)
+                .map_err(redb::Error::from)?;
         }
         Ok(())
     }
@@ -502,14 +540,16 @@ impl<'db> Store<'db> {
             .open_table(self.spk_table_defn())
             .map_err(redb::Error::from)?;
         for (desc, map) in spk_cache {
-            map.iter().for_each(|entry| {
-                table
-                    .insert(
-                        (DIDWrapper(*desc), *entry.0),
-                        ScriptWrapper((*entry.1).clone()),
-                    )
-                    .unwrap();
-            });
+            map.iter()
+                .try_for_each(|entry| {
+                    table
+                        .insert(
+                            (DIDWrapper(*desc), *entry.0),
+                            ScriptWrapper((*entry.1).clone()),
+                        )
+                        .map(|_| ())
+                })
+                .map_err(redb::Error::from)?;
         }
         Ok(())
     }
@@ -539,7 +579,7 @@ impl<'db> Store<'db> {
         &self,
         changeset: &mut tx_graph::ChangeSet<A>,
     ) -> Result<(), BdkRedbError> {
-        let read_tx = self.db.begin_read().unwrap();
+        let read_tx = self.db.begin_read().map_err(redb::Error::from)?;
         self.read_txs(&read_tx, &mut changeset.txs)?;
         self.read_txouts(&read_tx, &mut changeset.txouts)?;
         self.read_anchors::<A>(&read_tx, &mut changeset.anchors)?;
@@ -555,7 +595,7 @@ impl<'db> Store<'db> {
         &self,
         changeset: &mut keychain_txout::ChangeSet,
     ) -> Result<(), BdkRedbError> {
-        let read_tx = self.db.begin_read().unwrap();
+        let read_tx = self.db.begin_read().map_err(redb::Error::from)?;
         self.read_last_revealed(&read_tx, &mut changeset.last_revealed)?;
         self.read_spks(&read_tx, &mut changeset.spk_cache)?;
         Ok(())
@@ -566,25 +606,26 @@ impl<'db> Store<'db> {
         &self,
         desc_changeset: &mut BTreeMap<u64, Descriptor<DescriptorPublicKey>>,
     ) -> Result<(), BdkRedbError> {
-        let read_tx = self.db.begin_read().unwrap();
+        let read_tx = self.db.begin_read().map_err(redb::Error::from)?;
         let table = read_tx
             .open_table(self.keychains_table_defn())
             .map_err(redb::Error::from)?;
 
-        table.iter().unwrap().for_each(|entry| {
+        for entry in table.iter().map_err(redb::Error::from)? {
+            let (label, keychain) = entry.map_err(redb::Error::from)?;
             desc_changeset.insert(
-                entry.as_ref().unwrap().0.value(),
-                Descriptor::<DescriptorPublicKey>::from_str(entry.unwrap().1.value().as_str())
-                    .unwrap(),
+                label.value(),
+                Descriptor::<DescriptorPublicKey>::from_str(keychain.value().as_str())
+                    .expect("parse descriptors"),
             );
-        });
+        }
 
         Ok(())
     }
 
     // This function loads network from db.
     pub fn read_network(&self, network: &mut Option<bitcoin::Network>) -> Result<(), BdkRedbError> {
-        let read_tx = self.db.begin_read().unwrap();
+        let read_tx = self.db.begin_read().map_err(redb::Error::from)?;
         let table = read_tx.open_table(NETWORK).map_err(redb::Error::from)?;
         *network = table
             .get(&*self.wallet_name)
@@ -599,8 +640,8 @@ impl<'db> Store<'db> {
         &self,
         changeset: &mut local_chain::ChangeSet,
     ) -> Result<(), BdkRedbError> {
-        let read_tx = self.db.begin_read().unwrap();
-        self.read_blocks(&read_tx, &mut changeset.blocks).unwrap();
+        let read_tx = self.db.begin_read().map_err(redb::Error::from)?;
+        self.read_blocks(&read_tx, &mut changeset.blocks)?;
         Ok(())
     }
 
@@ -612,15 +653,13 @@ impl<'db> Store<'db> {
     ) -> Result<(), BdkRedbError> {
         let table = read_tx
             .open_table(self.blocks_table_defn())
-            .map_err(redb::Error::from)
-            .unwrap();
+            .map_err(redb::Error::from)?;
 
-        table.iter().unwrap().for_each(|entry| {
-            blocks.insert(
-                entry.as_ref().unwrap().0.value(),
-                Some(entry.as_ref().unwrap().1.value().0),
-            );
-        });
+        for entry in table.iter().map_err(redb::Error::from)? {
+            let (height, hash) = entry.map_err(redb::Error::from)?;
+            blocks.insert(height.value(), Some(hash.value().0));
+        }
+
         Ok(())
     }
 
@@ -630,10 +669,13 @@ impl<'db> Store<'db> {
         read_tx: &ReadTransaction,
         txs: &mut BTreeSet<Arc<Transaction>>,
     ) -> Result<(), BdkRedbError> {
-        let table = read_tx.open_table(self.txs_table_defn()).unwrap();
-        table.iter().unwrap().for_each(|entry| {
-            txs.insert(Arc::new(entry.unwrap().1.value().0));
-        });
+        let table = read_tx
+            .open_table(self.txs_table_defn())
+            .map_err(redb::Error::from)?;
+
+        for entry in table.iter().map_err(redb::Error::from)? {
+            txs.insert(Arc::new(entry.map_err(redb::Error::from)?.1.value().0));
+        }
         Ok(())
     }
 
@@ -643,19 +685,24 @@ impl<'db> Store<'db> {
         read_tx: &ReadTransaction,
         txouts: &mut BTreeMap<OutPoint, TxOut>,
     ) -> Result<(), BdkRedbError> {
-        let table = read_tx.open_table(self.txouts_table_defn()).unwrap();
-        table.iter().unwrap().for_each(|entry| {
+        let table = read_tx
+            .open_table(self.txouts_table_defn())
+            .map_err(redb::Error::from)?;
+
+        for entry in table.iter().map_err(redb::Error::from)? {
+            let (outpoint, txout) = entry.map_err(redb::Error::from)?;
             txouts.insert(
                 OutPoint {
-                    txid: entry.as_ref().unwrap().0.value().0.0,
-                    vout: entry.as_ref().unwrap().0.value().1,
+                    txid: outpoint.value().0.0,
+                    vout: outpoint.value().1,
                 },
                 TxOut {
-                    value: entry.as_ref().unwrap().1.value().0.0,
-                    script_pubkey: entry.as_ref().unwrap().1.value().1.0,
+                    value: txout.value().0.0,
+                    script_pubkey: txout.value().1.0,
                 },
             );
-        });
+        }
+
         Ok(())
     }
 
@@ -668,15 +715,15 @@ impl<'db> Store<'db> {
         let table = read_tx
             .open_table(self.anchors_table_defn::<A>())
             .map_err(redb::Error::from)?;
-        table.iter().unwrap().for_each(|entry| {
+
+        for entry in table.iter().map_err(redb::Error::from)? {
+            let (anchor, metadata) = entry.map_err(redb::Error::from)?;
             anchors.insert((
-                A::from_id(
-                    entry.as_ref().unwrap().0.value().1.0,
-                    entry.as_ref().unwrap().1.value(),
-                ),
-                entry.as_ref().unwrap().0.value().0.0,
+                A::from_id(anchor.value().1.0, metadata.value()),
+                anchor.value().0.0,
             ));
-        });
+        }
+
         Ok(())
     }
 
@@ -689,12 +736,11 @@ impl<'db> Store<'db> {
         let table = read_tx
             .open_table(self.last_seen_defn())
             .map_err(redb::Error::from)?;
-        table.iter().unwrap().for_each(|entry| {
-            last_seen.insert(
-                entry.as_ref().unwrap().0.value().0,
-                entry.as_ref().unwrap().1.value(),
-            );
-        });
+
+        for entry in table.iter().map_err(redb::Error::from)? {
+            let (txid, last_seen_num) = entry.map_err(redb::Error::from)?;
+            last_seen.insert(txid.value().0, last_seen_num.value());
+        }
         Ok(())
     }
 
@@ -707,12 +753,11 @@ impl<'db> Store<'db> {
         let table = read_tx
             .open_table(self.last_evicted_table_defn())
             .map_err(redb::Error::from)?;
-        table.iter().unwrap().for_each(|entry| {
-            last_evicted.insert(
-                entry.as_ref().unwrap().0.value().0,
-                entry.as_ref().unwrap().1.value(),
-            );
-        });
+
+        for entry in table.iter().map_err(redb::Error::from)? {
+            let (txid, last_evicted_num) = entry.map_err(redb::Error::from)?;
+            last_evicted.insert(txid.value().0, last_evicted_num.value());
+        }
         Ok(())
     }
 
@@ -725,12 +770,11 @@ impl<'db> Store<'db> {
         let table = read_tx
             .open_table(self.first_seen_table_defn())
             .map_err(redb::Error::from)?;
-        table.iter().unwrap().for_each(|entry| {
-            first_seen.insert(
-                entry.as_ref().unwrap().0.value().0,
-                entry.as_ref().unwrap().1.value(),
-            );
-        });
+
+        for entry in table.iter().map_err(redb::Error::from)? {
+            let (txid, first_seen_num) = entry.map_err(redb::Error::from)?;
+            first_seen.insert(txid.value().0, first_seen_num.value());
+        }
         Ok(())
     }
 
@@ -743,12 +787,11 @@ impl<'db> Store<'db> {
         let table = read_tx
             .open_table(self.last_revealed_table_defn())
             .map_err(redb::Error::from)?;
-        table.iter().unwrap().for_each(|entry| {
-            last_revealed.insert(
-                entry.as_ref().unwrap().0.value().0,
-                entry.as_ref().unwrap().1.value(),
-            );
-        });
+
+        for entry in table.iter().map_err(redb::Error::from)? {
+            let (desc, last_revealed_idx) = entry.map_err(redb::Error::from)?;
+            last_revealed.insert(desc.value().0, last_revealed_idx.value());
+        }
         Ok(())
     }
 
@@ -761,15 +804,14 @@ impl<'db> Store<'db> {
         let table = read_tx
             .open_table(self.spk_table_defn())
             .map_err(redb::Error::from)?;
-        table.iter().unwrap().for_each(|entry| {
+
+        for entry in table.iter().map_err(redb::Error::from)? {
+            let (desc, spk) = entry.map_err(redb::Error::from)?;
             spk_cache
-                .entry(entry.as_ref().unwrap().0.value().0.0)
+                .entry(desc.value().0.0)
                 .or_default()
-                .insert(
-                    entry.as_ref().unwrap().0.value().1,
-                    entry.as_ref().unwrap().1.value().0,
-                );
-        });
+                .insert(desc.value().1, spk.value().0);
+        }
         Ok(())
     }
 }
