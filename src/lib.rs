@@ -2,12 +2,10 @@ pub mod anchor_trait;
 pub mod error;
 
 use anchor_trait::AnchorWithMetaData;
-use bdk_chain::bitcoin::{self, Network, OutPoint, Txid, Transaction};
+use bdk_chain::bitcoin::{self, Network, OutPoint, Transaction, Txid};
 use bdk_chain::bitcoin::{Amount, BlockHash, ScriptBuf, TxOut, hashes::Hash};
-use bdk_chain::{
-    BlockId, DescriptorId, keychain_txout, local_chain, tx_graph
-};
 use bdk_chain::miniscript::descriptor::{Descriptor, DescriptorPublicKey};
+use bdk_chain::{BlockId, DescriptorId, keychain_txout, local_chain, tx_graph};
 #[cfg(feature = "wallet")]
 use bdk_wallet::{ChangeSet, WalletPersister};
 use error::BdkRedbError;
@@ -721,7 +719,9 @@ impl<'db> Store<'db> {
             let (anchor, metadata) = entry.map_err(redb::Error::from)?;
             let (txid_bytes, block_id_bytes) = anchor.value();
             let block_id = BlockId {
-                height: u32::from_le_bytes(block_id_bytes[0..4].try_into().expect("slice has length 4")),
+                height: u32::from_le_bytes(
+                    block_id_bytes[0..4].try_into().expect("slice has length 4"),
+                ),
                 hash: BlockHash::from_slice(&block_id_bytes[4..])?,
             };
             anchors.insert((
@@ -848,12 +848,14 @@ impl WalletPersister for Store<'_> {
 mod test {
     use super::*;
     use bdk_chain::BlockId;
+    use bdk_chain::ConfirmationBlockTime;
     use bdk_chain::{
+        DescriptorExt, Merge,
         bitcoin::{
             self, Amount, BlockHash, OutPoint, ScriptBuf, Transaction, TxIn, TxOut, absolute,
             hashes::Hash, transaction, transaction::Txid,
         },
-        DescriptorExt, Merge, keychain_txout, local_chain,
+        keychain_txout, local_chain,
         miniscript::descriptor::Descriptor,
     };
     #[cfg(feature = "wallet")]
@@ -861,7 +863,6 @@ mod test {
     use std::sync::Arc;
     use std::{collections::BTreeMap, path::Path};
     use tempfile::NamedTempFile;
-    use bdk_chain::ConfirmationBlockTime;
 
     const DESCRIPTORS: [&str; 2] = [
         "tr([5940b9b9/86'/0'/0']tpubDDVNqmq75GNPWQ9UNKfP43UwjaHU4GYfoPavojQbfpyfZp2KetWgjGBRRAy4tYCrAA6SB11mhQAkqxjh1VtQHyKwT4oYxpwLaGHvoKmtxZf/0/*)#44aqnlam",
