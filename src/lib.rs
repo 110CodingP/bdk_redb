@@ -355,7 +355,7 @@ impl<'db> Store<'db> {
             .map_err(redb::Error::from)?;
         for tx in txs {
             let mut vec: Vec<u8> = Vec::new();
-            ciborium::into_writer(tx, &mut vec).unwrap();
+            ciborium::into_writer(tx, &mut vec)?;
             table
                 .insert(tx.compute_txid().to_byte_array(), vec)
                 .map_err(redb::Error::from)?;
@@ -668,7 +668,7 @@ impl<'db> Store<'db> {
 
         for entry in table.iter().map_err(redb::Error::from)? {
             let tx_vec = entry.map_err(redb::Error::from)?.1.value();
-            let tx = ciborium::from_reader(tx_vec.as_slice()).unwrap();
+            let tx = ciborium::from_reader(tx_vec.as_slice())?;
             txs.insert(Arc::new(tx));
         }
         Ok(())
@@ -715,8 +715,8 @@ impl<'db> Store<'db> {
             let (anchor, metadata) = entry.map_err(redb::Error::from)?;
             let (txid_bytes, block_id_bytes) = anchor.value();
             let block_id = BlockId {
-                height: u32::from_le_bytes(block_id_bytes[0..4].try_into().unwrap()),
-                hash: BlockHash::from_slice(&block_id_bytes[4..]).unwrap(),
+                height: u32::from_le_bytes(block_id_bytes[0..4].try_into().expect("slice has length 4")),
+                hash: BlockHash::from_slice(&block_id_bytes[4..])?,
             };
             anchors.insert((
                 A::from_id(block_id, metadata.value()),
