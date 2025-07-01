@@ -1,3 +1,5 @@
+pub use redb;
+
 pub mod anchor_trait;
 pub mod error;
 
