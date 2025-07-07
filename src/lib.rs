@@ -10,7 +10,7 @@ use bdk_chain::miniscript::descriptor::{Descriptor, DescriptorPublicKey};
 use bdk_chain::{BlockId, DescriptorId, keychain_txout, local_chain, tx_graph};
 #[cfg(feature = "wallet")]
 use bdk_wallet::{ChangeSet, WalletPersister};
-use error::BdkRedbError;
+use error::StoreError;
 use redb::{Database, ReadTransaction, ReadableTable, TableDefinition, WriteTransaction};
 use std::collections::{BTreeMap, BTreeSet};
 use std::str::FromStr;
@@ -100,7 +100,7 @@ impl<'db> Store<'db> {
     }
 
     // This function creates a brand new `Store`.
-    pub fn new(db: &'db Database, wallet_name: String) -> Result<Self, BdkRedbError> {
+    pub fn new(db: &'db Database, wallet_name: String) -> Result<Self, StoreError> {
         // Create table names to be stored in the Store.
         let mut keychain_table_name = wallet_name.clone();
         keychain_table_name.push_str("_keychain");
@@ -139,7 +139,7 @@ impl<'db> Store<'db> {
     }
 
     // This function initializes all tables since open_table creates a new one if it doesn't exist.
-    pub fn create_tables<A: AnchorWithMetaData>(&self) -> Result<(), BdkRedbError> {
+    pub fn create_tables<A: AnchorWithMetaData>(&self) -> Result<(), StoreError> {
         let write_tx = self.db.begin_write().map_err(redb::Error::from)?;
 
         let _ = write_tx.open_table(NETWORK).map_err(redb::Error::from)?;
@@ -157,7 +157,7 @@ impl<'db> Store<'db> {
 
     // This function initializes tables corresponding to local_chain since open_table creates
     // a new one if it doesn't exist.
-    pub fn create_local_chain_tables(&self) -> Result<(), BdkRedbError> {
+    pub fn create_local_chain_tables(&self) -> Result<(), StoreError> {
         let write_tx = self.db.begin_write().map_err(redb::Error::from)?;
         let _ = write_tx
             .open_table(self.blocks_table_defn())
@@ -168,7 +168,7 @@ impl<'db> Store<'db> {
 
     // This function initializes tables corresponding to tx_graph since open_table creates
     // a new one if it doesn't exist.
-    pub fn create_tx_graph_tables<A: AnchorWithMetaData>(&self) -> Result<(), BdkRedbError> {
+    pub fn create_tx_graph_tables<A: AnchorWithMetaData>(&self) -> Result<(), StoreError> {
         let write_tx = self.db.begin_write().map_err(redb::Error::from)?;
         let _ = write_tx
             .open_table(self.txs_table_defn())
@@ -195,7 +195,7 @@ impl<'db> Store<'db> {
 
     // This function initializes tables corresponding to indexer since open_table creates
     // a new one if it doesn't exist.
-    pub fn create_indexer_tables(&self) -> Result<(), BdkRedbError> {
+    pub fn create_indexer_tables(&self) -> Result<(), StoreError> {
         let write_tx = self.db.begin_write().map_err(redb::Error::from)?;
         let _ = write_tx
             .open_table(self.spk_table_defn())
@@ -208,7 +208,7 @@ impl<'db> Store<'db> {
         Ok(())
     }
 
-    pub fn create_keychains_table(&self) -> Result<(), BdkRedbError> {
+    pub fn create_keychains_table(&self) -> Result<(), StoreError> {
         let write_tx = self.db.begin_write().map_err(redb::Error::from)?;
         let _ = write_tx
             .open_table(self.keychains_table_defn())
@@ -217,7 +217,7 @@ impl<'db> Store<'db> {
         Ok(())
     }
 
-    pub fn create_network_table(&self) -> Result<(), BdkRedbError> {
+    pub fn create_network_table(&self) -> Result<(), StoreError> {
         let write_tx = self.db.begin_write().map_err(redb::Error::from)?;
         let _ = write_tx.open_table(NETWORK).map_err(redb::Error::from)?;
         write_tx.commit().map_err(redb::Error::from)?;
@@ -227,7 +227,7 @@ impl<'db> Store<'db> {
     #[cfg(feature = "wallet")]
     // This function persists `bdk_wallet::Changeset` into our db. It persists each field by calling
     // corresponding persistence functions.
-    pub fn persist_changeset(&self, changeset: &ChangeSet) -> Result<(), BdkRedbError> {
+    pub fn persist_changeset(&self, changeset: &ChangeSet) -> Result<(), StoreError> {
         self.persist_network(&changeset.network)?;
         let mut desc_changeset: BTreeMap<u64, Descriptor<DescriptorPublicKey>> = BTreeMap::new();
         if let Some(desc) = &changeset.descriptor {
@@ -248,7 +248,7 @@ impl<'db> Store<'db> {
     pub fn persist_tx_graph<A: AnchorWithMetaData>(
         &self,
         changeset: &tx_graph::ChangeSet<A>,
-    ) -> Result<(), BdkRedbError> {
+    ) -> Result<(), StoreError> {
         let write_tx = self.db.begin_write().map_err(redb::Error::from)?;
         self.persist_txs(&write_tx, &changeset.txs)?;
         self.persist_txouts(&write_tx, &changeset.txouts)?;
@@ -268,7 +268,7 @@ impl<'db> Store<'db> {
     pub fn persist_indexer(
         &self,
         changeset: &keychain_txout::ChangeSet,
-    ) -> Result<(), BdkRedbError> {
+    ) -> Result<(), StoreError> {
         let write_tx = self.db.begin_write().map_err(redb::Error::from)?;
         self.persist_last_revealed(&write_tx, &changeset.last_revealed)?;
         self.persist_spks(&write_tx, &changeset.spk_cache)?;
@@ -281,7 +281,7 @@ impl<'db> Store<'db> {
         &self,
         // maps label to descriptor
         changeset: &BTreeMap<u64, Descriptor<DescriptorPublicKey>>,
-    ) -> Result<(), BdkRedbError> {
+    ) -> Result<(), StoreError> {
         let write_tx = self.db.begin_write().map_err(redb::Error::from)?;
         {
             let mut table = write_tx
@@ -300,7 +300,7 @@ impl<'db> Store<'db> {
     }
 
     // This function persists the network into our db.
-    pub fn persist_network(&self, network: &Option<bitcoin::Network>) -> Result<(), BdkRedbError> {
+    pub fn persist_network(&self, network: &Option<bitcoin::Network>) -> Result<(), StoreError> {
         let write_tx = self.db.begin_write().map_err(redb::Error::from)?;
         {
             let mut table = write_tx.open_table(NETWORK).map_err(redb::Error::from)?;
@@ -320,7 +320,7 @@ impl<'db> Store<'db> {
     pub fn persist_local_chain(
         &self,
         changeset: &local_chain::ChangeSet,
-    ) -> Result<(), BdkRedbError> {
+    ) -> Result<(), StoreError> {
         let write_tx = self.db.begin_write().map_err(redb::Error::from)?;
         self.persist_blocks(&write_tx, &changeset.blocks)?;
         write_tx.commit().map_err(redb::Error::from)?;
@@ -332,7 +332,7 @@ impl<'db> Store<'db> {
         &self,
         write_tx: &WriteTransaction,
         blocks: &BTreeMap<u32, Option<BlockHash>>,
-    ) -> Result<(), BdkRedbError> {
+    ) -> Result<(), StoreError> {
         let mut table = write_tx
             .open_table(self.blocks_table_defn())
             .map_err(redb::Error::from)?;
@@ -354,7 +354,7 @@ impl<'db> Store<'db> {
         &self,
         write_tx: &WriteTransaction,
         txs: &BTreeSet<Arc<Transaction>>,
-    ) -> Result<(), BdkRedbError> {
+    ) -> Result<(), StoreError> {
         let mut table = write_tx
             .open_table(self.txs_table_defn())
             .map_err(redb::Error::from)?;
@@ -373,7 +373,7 @@ impl<'db> Store<'db> {
         &self,
         write_tx: &WriteTransaction,
         txouts: &BTreeMap<OutPoint, TxOut>,
-    ) -> Result<(), BdkRedbError> {
+    ) -> Result<(), StoreError> {
         let mut table = write_tx
             .open_table(self.txouts_table_defn())
             .map_err(redb::Error::from)?;
@@ -397,7 +397,7 @@ impl<'db> Store<'db> {
         write_tx: &WriteTransaction,
         read_tx: &ReadTransaction,
         anchors: &BTreeSet<(A, Txid)>,
-    ) -> Result<(), BdkRedbError> {
+    ) -> Result<(), StoreError> {
         let mut table = write_tx
             .open_table(self.anchors_table_defn::<A>())
             .map_err(redb::Error::from)?;
@@ -430,7 +430,7 @@ impl<'db> Store<'db> {
         write_tx: &WriteTransaction,
         read_tx: &ReadTransaction,
         last_seen: &BTreeMap<Txid, u64>,
-    ) -> Result<(), BdkRedbError> {
+    ) -> Result<(), StoreError> {
         let mut table = write_tx
             .open_table(self.last_seen_defn())
             .map_err(redb::Error::from)?;
@@ -459,7 +459,7 @@ impl<'db> Store<'db> {
         write_tx: &WriteTransaction,
         read_tx: &ReadTransaction,
         last_evicted: &BTreeMap<Txid, u64>,
-    ) -> Result<(), BdkRedbError> {
+    ) -> Result<(), StoreError> {
         let mut table = write_tx
             .open_table(self.last_evicted_table_defn())
             .map_err(redb::Error::from)?;
@@ -488,7 +488,7 @@ impl<'db> Store<'db> {
         write_tx: &WriteTransaction,
         read_tx: &ReadTransaction,
         first_seen: &BTreeMap<Txid, u64>,
-    ) -> Result<(), BdkRedbError> {
+    ) -> Result<(), StoreError> {
         let mut table = write_tx
             .open_table(self.first_seen_table_defn())
             .map_err(redb::Error::from)?;
@@ -516,7 +516,7 @@ impl<'db> Store<'db> {
         &self,
         write_tx: &WriteTransaction,
         last_revealed: &BTreeMap<DescriptorId, u32>,
-    ) -> Result<(), BdkRedbError> {
+    ) -> Result<(), StoreError> {
         let mut table = write_tx
             .open_table(self.last_revealed_table_defn())
             .map_err(redb::Error::from)?;
@@ -533,7 +533,7 @@ impl<'db> Store<'db> {
         &self,
         write_tx: &WriteTransaction,
         spk_cache: &BTreeMap<DescriptorId, BTreeMap<u32, ScriptBuf>>,
-    ) -> Result<(), BdkRedbError> {
+    ) -> Result<(), StoreError> {
         let mut table = write_tx
             .open_table(self.spk_table_defn())
             .map_err(redb::Error::from)?;
@@ -552,7 +552,7 @@ impl<'db> Store<'db> {
     #[cfg(feature = "wallet")]
     // This function loads `bdk_wallet::Changeset` from db. It calls the corresponding load
     // functions for each of its fields.
-    pub fn read_changeset(&self, changeset: &mut ChangeSet) -> Result<(), BdkRedbError> {
+    pub fn read_changeset(&self, changeset: &mut ChangeSet) -> Result<(), StoreError> {
         self.read_network(&mut changeset.network)?;
         let mut desc_changeset: BTreeMap<u64, Descriptor<DescriptorPublicKey>> = BTreeMap::new();
         self.read_keychains(&mut desc_changeset)?;
@@ -574,7 +574,7 @@ impl<'db> Store<'db> {
     pub fn read_tx_graph<A: AnchorWithMetaData>(
         &self,
         changeset: &mut tx_graph::ChangeSet<A>,
-    ) -> Result<(), BdkRedbError> {
+    ) -> Result<(), StoreError> {
         let read_tx = self.db.begin_read().map_err(redb::Error::from)?;
         self.read_txs(&read_tx, &mut changeset.txs)?;
         self.read_txouts(&read_tx, &mut changeset.txouts)?;
@@ -590,7 +590,7 @@ impl<'db> Store<'db> {
     pub fn read_indexer(
         &self,
         changeset: &mut keychain_txout::ChangeSet,
-    ) -> Result<(), BdkRedbError> {
+    ) -> Result<(), StoreError> {
         let read_tx = self.db.begin_read().map_err(redb::Error::from)?;
         self.read_last_revealed(&read_tx, &mut changeset.last_revealed)?;
         self.read_spks(&read_tx, &mut changeset.spk_cache)?;
@@ -601,7 +601,7 @@ impl<'db> Store<'db> {
     pub fn read_keychains(
         &self,
         desc_changeset: &mut BTreeMap<u64, Descriptor<DescriptorPublicKey>>,
-    ) -> Result<(), BdkRedbError> {
+    ) -> Result<(), StoreError> {
         let read_tx = self.db.begin_read().map_err(redb::Error::from)?;
         let table = read_tx
             .open_table(self.keychains_table_defn())
@@ -620,7 +620,7 @@ impl<'db> Store<'db> {
     }
 
     // This function loads network from db.
-    pub fn read_network(&self, network: &mut Option<bitcoin::Network>) -> Result<(), BdkRedbError> {
+    pub fn read_network(&self, network: &mut Option<bitcoin::Network>) -> Result<(), StoreError> {
         let read_tx = self.db.begin_read().map_err(redb::Error::from)?;
         let table = read_tx.open_table(NETWORK).map_err(redb::Error::from)?;
         *network = table
@@ -635,7 +635,7 @@ impl<'db> Store<'db> {
     pub fn read_local_chain(
         &self,
         changeset: &mut local_chain::ChangeSet,
-    ) -> Result<(), BdkRedbError> {
+    ) -> Result<(), StoreError> {
         let read_tx = self.db.begin_read().map_err(redb::Error::from)?;
         self.read_blocks(&read_tx, &mut changeset.blocks)?;
         Ok(())
@@ -646,7 +646,7 @@ impl<'db> Store<'db> {
         &self,
         read_tx: &ReadTransaction,
         blocks: &mut BTreeMap<u32, Option<BlockHash>>,
-    ) -> Result<(), BdkRedbError> {
+    ) -> Result<(), StoreError> {
         let table = read_tx
             .open_table(self.blocks_table_defn())
             .map_err(redb::Error::from)?;
@@ -667,7 +667,7 @@ impl<'db> Store<'db> {
         &self,
         read_tx: &ReadTransaction,
         txs: &mut BTreeSet<Arc<Transaction>>,
-    ) -> Result<(), BdkRedbError> {
+    ) -> Result<(), StoreError> {
         let table = read_tx
             .open_table(self.txs_table_defn())
             .map_err(redb::Error::from)?;
@@ -685,7 +685,7 @@ impl<'db> Store<'db> {
         &self,
         read_tx: &ReadTransaction,
         txouts: &mut BTreeMap<OutPoint, TxOut>,
-    ) -> Result<(), BdkRedbError> {
+    ) -> Result<(), StoreError> {
         let table = read_tx
             .open_table(self.txouts_table_defn())
             .map_err(redb::Error::from)?;
@@ -712,7 +712,7 @@ impl<'db> Store<'db> {
         &self,
         read_tx: &ReadTransaction,
         anchors: &mut BTreeSet<(A, Txid)>,
-    ) -> Result<(), BdkRedbError> {
+    ) -> Result<(), StoreError> {
         let table = read_tx
             .open_table(self.anchors_table_defn::<A>())
             .map_err(redb::Error::from)?;
@@ -740,7 +740,7 @@ impl<'db> Store<'db> {
         &self,
         read_tx: &ReadTransaction,
         last_seen: &mut BTreeMap<Txid, u64>,
-    ) -> Result<(), BdkRedbError> {
+    ) -> Result<(), StoreError> {
         let table = read_tx
             .open_table(self.last_seen_defn())
             .map_err(redb::Error::from)?;
@@ -757,7 +757,7 @@ impl<'db> Store<'db> {
         &self,
         read_tx: &ReadTransaction,
         last_evicted: &mut BTreeMap<Txid, u64>,
-    ) -> Result<(), BdkRedbError> {
+    ) -> Result<(), StoreError> {
         let table = read_tx
             .open_table(self.last_evicted_table_defn())
             .map_err(redb::Error::from)?;
@@ -777,7 +777,7 @@ impl<'db> Store<'db> {
         &self,
         read_tx: &ReadTransaction,
         first_seen: &mut BTreeMap<Txid, u64>,
-    ) -> Result<(), BdkRedbError> {
+    ) -> Result<(), StoreError> {
         let table = read_tx
             .open_table(self.first_seen_table_defn())
             .map_err(redb::Error::from)?;
@@ -794,7 +794,7 @@ impl<'db> Store<'db> {
         &self,
         read_tx: &ReadTransaction,
         last_revealed: &mut BTreeMap<DescriptorId, u32>,
-    ) -> Result<(), BdkRedbError> {
+    ) -> Result<(), StoreError> {
         let table = read_tx
             .open_table(self.last_revealed_table_defn())
             .map_err(redb::Error::from)?;
@@ -814,7 +814,7 @@ impl<'db> Store<'db> {
         &self,
         read_tx: &ReadTransaction,
         spk_cache: &mut BTreeMap<DescriptorId, BTreeMap<u32, ScriptBuf>>,
-    ) -> Result<(), BdkRedbError> {
+    ) -> Result<(), StoreError> {
         let table = read_tx
             .open_table(self.spk_table_defn())
             .map_err(redb::Error::from)?;
@@ -832,7 +832,7 @@ impl<'db> Store<'db> {
 
 #[cfg(feature = "wallet")]
 impl WalletPersister for Store<'_> {
-    type Error = BdkRedbError;
+    type Error = StoreError;
     fn initialize(persister: &mut Self) -> Result<ChangeSet, Self::Error> {
         persister.create_tables::<ConfirmationBlockTime>()?;
         let mut changeset = ChangeSet::default();

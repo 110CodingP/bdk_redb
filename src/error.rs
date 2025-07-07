@@ -2,7 +2,7 @@
 use std::io::Error as IoError;
 
 #[derive(Debug, thiserror::Error)]
-pub enum BdkRedbError {
+pub enum StoreError {
     #[error("Database error: {0}")]
     Redb(#[from] redb::Error),
     #[error("Serialization error: {0}")]
