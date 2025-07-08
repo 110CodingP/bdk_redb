@@ -31,7 +31,7 @@ jobs:
         rust:
           - version: ${{ needs.prepare.outputs.rust_version }}
             clippy: true
-          - version: 1.63.0 # Overall MSRV
+          - version: 1.85.0 # Overall MSRV
         features:
           - --no-default-features
           - --all-features
