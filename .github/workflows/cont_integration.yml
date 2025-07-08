@@ -48,9 +48,6 @@ jobs:
             profile: minimal
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2.7.8
-      - name: Pin dependencies for MSRV
-        if: matrix.rust.version == '1.63.0'
-        # run: ./ci/pin-msrv.sh
       - name: Build + Test
         env:
           MATRIX_RUST_VERSION: ${{ matrix.rust.version }}
