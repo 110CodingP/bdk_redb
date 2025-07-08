@@ -25,8 +25,8 @@ const NETWORK: TableDefinition<&str, String> = TableDefinition::new("network");
 
 // This is the primary struct of this crate. It holds the database corresponding to a wallet.
 // It also holds the table names of tables which are specific to each wallet in a database file.
-pub struct Store<'db> {
-    db: &'db Database,
+pub struct Store {
+    db: Arc<Database>,
     wallet_name: String,
 
     keychain_table_name: String,
@@ -41,7 +41,7 @@ pub struct Store<'db> {
     spk_table_name: String,
 }
 
-impl<'db> Store<'db> {
+impl Store {
     // This table stores (keychain, Descriptor) pairs on a high level.
     // keychain is as in bdk_wallet#230 .
     fn keychains_table_defn(&self) -> TableDefinition<u64, String> {
@@ -100,7 +100,7 @@ impl<'db> Store<'db> {
     }
 
     // This function creates a brand new `Store`.
-    pub fn new(db: &'db Database, wallet_name: String) -> Result<Self, StoreError> {
+    pub fn new(db: Arc<Database>, wallet_name: String) -> Result<Self, StoreError> {
         // Create table names to be stored in the Store.
         let mut keychain_table_name = wallet_name.clone();
         keychain_table_name.push_str("_keychain");
@@ -846,7 +846,7 @@ impl<'db> Store<'db> {
 }
 
 #[cfg(feature = "wallet")]
-impl WalletPersister for Store<'_> {
+impl WalletPersister for Store {
     type Error = StoreError;
     fn initialize(persister: &mut Self) -> Result<ChangeSet, Self::Error> {
         persister.create_tables::<ConfirmationBlockTime>()?;
@@ -894,7 +894,7 @@ mod test {
         Database::create(path).unwrap()
     }
 
-    fn create_test_store<'db>(db: &'db Database, wallet_name: &str) -> Store<'db> {
+    fn create_test_store(db: Arc<Database>, wallet_name: &str) -> Store {
         let store = Store::new(db, wallet_name.to_string()).unwrap();
         store
     }
@@ -903,7 +903,7 @@ mod test {
     fn test_network_persistence() {
         let tmpfile = NamedTempFile::new().unwrap();
         let db = create_db(tmpfile.path());
-        let store = create_test_store(&db, "wallet1");
+        let store = create_test_store(Arc::new(db), "wallet1");
         store.create_network_table().unwrap();
         let network_changeset = Some(Network::Bitcoin);
         store.persist_network(&network_changeset).unwrap();
@@ -918,7 +918,7 @@ mod test {
     fn test_keychains_persistence() {
         let tmpfile = NamedTempFile::new().unwrap();
         let db = create_db(tmpfile.path());
-        let store = create_test_store(&db, "wallet1");
+        let store = create_test_store(Arc::new(db), "wallet1");
         store.create_keychains_table().unwrap();
 
         let descriptor: Descriptor<DescriptorPublicKey> = "tr([5940b9b9/86'/0'/0']tpubDDVNqmq75GNPWQ9UNKfP43UwjaHU4GYfoPavojQbfpyfZp2KetWgjGBRRAy4tYCrAA6SB11mhQAkqxjh1VtQHyKwT4oYxpwLaGHvoKmtxZf/0/*)#44aqnlam".parse().unwrap();
@@ -940,7 +940,7 @@ mod test {
     fn test_keychains_persistence_second() {
         let tmpfile = NamedTempFile::new().unwrap();
         let db = create_db(tmpfile.path());
-        let store = create_test_store(&db, "wallet1");
+        let store = create_test_store(Arc::new(db), "wallet1");
         store.create_keychains_table().unwrap();
 
         let descriptor: Descriptor<DescriptorPublicKey> = "tr([5940b9b9/86'/0'/0']tpubDDVNqmq75GNPWQ9UNKfP43UwjaHU4GYfoPavojQbfpyfZp2KetWgjGBRRAy4tYCrAA6SB11mhQAkqxjh1VtQHyKwT4oYxpwLaGHvoKmtxZf/1/*)#ypcpw2dr".parse().unwrap();
@@ -962,7 +962,7 @@ mod test {
     fn test_single_desc_persistence() {
         let tmpfile = NamedTempFile::new().unwrap();
         let db = create_db(tmpfile.path());
-        let store = create_test_store(&db, "wallet1");
+        let store = create_test_store(Arc::new(db), "wallet1");
         store.create_keychains_table().unwrap();
 
         let descriptor: Descriptor<DescriptorPublicKey> = "tr([5940b9b9/86'/0'/0']tpubDDVNqmq75GNPWQ9UNKfP43UwjaHU4GYfoPavojQbfpyfZp2KetWgjGBRRAy4tYCrAA6SB11mhQAkqxjh1VtQHyKwT4oYxpwLaGHvoKmtxZf/0/*)#44aqnlam".parse().unwrap();
@@ -982,7 +982,7 @@ mod test {
     fn test_local_chain_persistence() {
         let tmpfile = NamedTempFile::new().unwrap();
         let db = create_db(tmpfile.path());
-        let store = create_test_store(&db, "wallet1");
+        let store = create_test_store(Arc::new(db), "wallet1");
 
         // create a local_chain_changeset, persist that and read it
         let mut blocks: BTreeMap<u32, Option<BlockHash>> = BTreeMap::new();
@@ -1020,7 +1020,7 @@ mod test {
     fn test_blocks_persistence() {
         let tmpfile = NamedTempFile::new().unwrap();
         let db = create_db(tmpfile.path());
-        let store = create_test_store(&db, "wallet1");
+        let store = create_test_store(Arc::new(db), "wallet1");
         let mut blocks: BTreeMap<u32, Option<BlockHash>> = BTreeMap::new();
         blocks.insert(0u32, Some(hash!("B")));
         blocks.insert(1u32, Some(hash!("D")));
@@ -1105,7 +1105,7 @@ mod test {
     fn test_persist_last_seen() {
         let tmpfile = NamedTempFile::new().unwrap();
         let db = create_db(tmpfile.path());
-        let store = create_test_store(&db, "wallet1");
+        let store = create_test_store(Arc::new(db), "wallet1");
 
         let (tx1, tx2, tx3) = create_txns();
 
@@ -1160,7 +1160,7 @@ mod test {
     fn test_persist_last_evicted() {
         let tmpfile = NamedTempFile::new().unwrap();
         let db = create_db(tmpfile.path());
-        let store = create_test_store(&db, "wallet1");
+        let store = create_test_store(Arc::new(db), "wallet1");
 
         let (tx1, tx2, tx3) = create_txns();
 
@@ -1219,7 +1219,7 @@ mod test {
     fn test_persist_first_seen() {
         let tmpfile = NamedTempFile::new().unwrap();
         let db = create_db(tmpfile.path());
-        let store = create_test_store(&db, "wallet1");
+        let store = create_test_store(Arc::new(db), "wallet1");
 
         let (tx1, tx2, tx3) = create_txns();
 
@@ -1274,7 +1274,7 @@ mod test {
     fn test_persist_txouts() {
         let tmpfile = NamedTempFile::new().unwrap();
         let db = create_db(tmpfile.path());
-        let store = create_test_store(&db, "wallet1");
+        let store = create_test_store(Arc::new(db), "wallet1");
 
         let mut txouts: BTreeMap<OutPoint, TxOut> = [
             (
@@ -1338,7 +1338,7 @@ mod test {
     fn test_persist_txs() {
         let tmpfile = NamedTempFile::new().unwrap();
         let db = create_db(tmpfile.path());
-        let store = create_test_store(&db, "wallet1");
+        let store = create_test_store(Arc::new(db), "wallet1");
 
         let (tx1, tx2, tx3) = create_txns();
 
@@ -1372,7 +1372,7 @@ mod test {
     fn test_persist_anchors() {
         let tmpfile = NamedTempFile::new().unwrap();
         let db = create_db(tmpfile.path());
-        let store = create_test_store(&db, "wallet1");
+        let store = create_test_store(Arc::new(db), "wallet1");
 
         let (tx1, tx2, tx3) = create_txns();
 
@@ -1439,7 +1439,7 @@ mod test {
     fn test_tx_graph_persistence() {
         let tmpfile = NamedTempFile::new().unwrap();
         let db = create_db(tmpfile.path());
-        let store = create_test_store(&db, "wallet1");
+        let store = create_test_store(Arc::new(db), "wallet1");
         let (tx1, tx2, _) = create_txns();
         let block_id = BlockId {
             height: 100,
@@ -1503,7 +1503,7 @@ mod test {
     fn test_last_revealed_persistence() {
         let tmpfile = NamedTempFile::new().unwrap();
         let db = create_db(tmpfile.path());
-        let store = create_test_store(&db, "wallet1");
+        let store = create_test_store(Arc::new(db), "wallet1");
         let secp = bitcoin::secp256k1::Secp256k1::signing_only();
 
         let descriptor_ids = DESCRIPTORS.map(|d| {
@@ -1556,7 +1556,7 @@ mod test {
     fn test_spks_persistence() {
         let tmpfile = NamedTempFile::new().unwrap();
         let db = create_db(tmpfile.path());
-        let store = create_test_store(&db, "wallet1");
+        let store = create_test_store(Arc::new(db), "wallet1");
         let secp = bitcoin::secp256k1::Secp256k1::signing_only();
 
         let descriptor_ids = DESCRIPTORS.map(|d| {
@@ -1636,7 +1636,7 @@ mod test {
     fn test_indexer_persistence() {
         let tmpfile = NamedTempFile::new().unwrap();
         let db = create_db(tmpfile.path());
-        let store = create_test_store(&db, "wallet1");
+        let store = create_test_store(Arc::new(db), "wallet1");
         let secp = bitcoin::secp256k1::Secp256k1::signing_only();
 
         let descriptor_ids = DESCRIPTORS.map(|d| {
@@ -1696,7 +1696,7 @@ mod test {
     fn test_persist_changeset() {
         let tmpfile = NamedTempFile::new().unwrap();
         let db = create_db(tmpfile.path());
-        let store = create_test_store(&db, "wallet1");
+        let store = create_test_store(Arc::new(db), "wallet1");
 
         let descriptor: Descriptor<DescriptorPublicKey> = DESCRIPTORS[1].parse().unwrap();
         let change_descriptor: Descriptor<DescriptorPublicKey> = DESCRIPTORS[0].parse().unwrap();
