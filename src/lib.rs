@@ -337,7 +337,8 @@ impl Store {
                     .insert(*ht, hash.to_byte_array())
                     .map_err(redb::Error::from)?,
                 // remove the block if hash is None
-                // assuming it is guaranteed that (ht, None) => there is an entry of form (ht,_) in the Table.
+                // assuming it is guaranteed that (ht, None) => there is an entry of form (ht,_) in
+                // the Table.
                 None => table.remove(*ht).map_err(redb::Error::from)?,
             };
         }
@@ -600,8 +601,8 @@ impl Store {
         Ok(())
     }
 
-    // This function loads `bdk_chain::indexer::keychain_txout` from db. It calls the corresponding load
-    // functions for each of its fields.
+    // This function loads `bdk_chain::indexer::keychain_txout` from db. It calls the corresponding
+    // load functions for each of its fields.
     pub fn read_indexer(
         &self,
         changeset: &mut keychain_txout::ChangeSet,
@@ -1429,6 +1430,66 @@ mod test {
 
         let read_tx = store.db.begin_read().unwrap();
         let mut anchors_read_new: BTreeSet<(ConfirmationBlockTime, Txid)> = BTreeSet::new();
+        store.read_anchors(&read_tx, &mut anchors_read_new).unwrap();
+
+        anchors.merge(anchors_new);
+        assert_eq!(anchors_read_new, anchors);
+    }
+
+    #[test]
+    fn test_persist_anchors_blockid() {
+        let tmpfile = NamedTempFile::new().unwrap();
+        let db = create_db(tmpfile.path());
+        let store = create_test_store(Arc::new(db), "wallet1");
+
+        let (tx1, tx2, tx3) = create_txns();
+
+        let anchor1 = BlockId {
+            height: 23,
+            hash: BlockHash::from_byte_array([0; 32]),
+        };
+
+        let anchor2 = BlockId {
+            height: 25,
+            hash: BlockHash::from_byte_array([0; 32]),
+        };
+
+        let txs: BTreeSet<Arc<Transaction>> = [Arc::new(tx1.clone()), Arc::new(tx2.clone())].into();
+        let mut anchors = [(anchor1, tx1.compute_txid()), (anchor2, tx2.compute_txid())].into();
+
+        let write_tx = store.db.begin_write().unwrap();
+        let _ = write_tx.open_table(store.txs_table_defn()).unwrap();
+        let _ = write_tx
+            .open_table(store.anchors_table_defn::<BlockId>())
+            .unwrap();
+        write_tx.commit().unwrap();
+
+        let write_tx = store.db.begin_write().unwrap();
+        let read_tx = store.db.begin_read().unwrap();
+        store
+            .persist_anchors(&write_tx, &read_tx, &anchors, &txs)
+            .unwrap();
+        read_tx.close().unwrap();
+        write_tx.commit().unwrap();
+
+        let read_tx = store.db.begin_read().unwrap();
+        let mut anchors_read: BTreeSet<(BlockId, Txid)> = BTreeSet::new();
+        store.read_anchors(&read_tx, &mut anchors_read).unwrap();
+        assert_eq!(anchors_read, anchors);
+
+        let txs_new: BTreeSet<Arc<Transaction>> = [Arc::new(tx3.clone())].into();
+        let anchors_new: BTreeSet<(BlockId, Txid)> = [(anchor2, tx3.compute_txid())].into();
+
+        let write_tx = store.db.begin_write().unwrap();
+        let read_tx = store.db.begin_read().unwrap();
+        store
+            .persist_anchors(&write_tx, &read_tx, &anchors_new, &txs_new)
+            .unwrap();
+        read_tx.close().unwrap();
+        write_tx.commit().unwrap();
+
+        let read_tx = store.db.begin_read().unwrap();
+        let mut anchors_read_new: BTreeSet<(BlockId, Txid)> = BTreeSet::new();
         store.read_anchors(&read_tx, &mut anchors_read_new).unwrap();
 
         anchors.merge(anchors_new);
