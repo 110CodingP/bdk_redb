@@ -250,25 +250,20 @@ impl<'db> Store<'db> {
         changeset: &tx_graph::ChangeSet<A>,
     ) -> Result<(), StoreError> {
         let write_tx = self.db.begin_write().map_err(redb::Error::from)?;
+        let read_tx = self.db.begin_read().map_err(redb::Error::from)?;
         self.persist_txs(&write_tx, &changeset.txs)?;
         self.persist_txouts(&write_tx, &changeset.txouts)?;
-        write_tx.commit().map_err(redb::Error::from)?;
-        let write_tx = self.db.begin_write().map_err(redb::Error::from)?;
-        let read_tx = self.db.begin_read().map_err(redb::Error::from)?;
-        self.persist_anchors::<A>(&write_tx, &read_tx, &changeset.anchors)?;
-        self.persist_last_seen(&write_tx, &read_tx, &changeset.last_seen)?;
-        self.persist_last_evicted(&write_tx, &read_tx, &changeset.last_evicted)?;
-        self.persist_first_seen(&write_tx, &read_tx, &changeset.first_seen)?;
+        self.persist_anchors::<A>(&write_tx, &read_tx, &changeset.anchors, &changeset.txs)?;
+        self.persist_last_seen(&write_tx, &read_tx, &changeset.last_seen, &changeset.txs)?;
+        self.persist_last_evicted(&write_tx, &read_tx, &changeset.last_evicted, &changeset.txs)?;
+        self.persist_first_seen(&write_tx, &read_tx, &changeset.first_seen, &changeset.txs)?;
         write_tx.commit().map_err(redb::Error::from)?;
         Ok(())
     }
 
     // This function persists `indexer::keychain_txout::Changeset` into our db. It persists each
     // field by calling corresponding persistence functions.
-    pub fn persist_indexer(
-        &self,
-        changeset: &keychain_txout::ChangeSet,
-    ) -> Result<(), StoreError> {
+    pub fn persist_indexer(&self, changeset: &keychain_txout::ChangeSet) -> Result<(), StoreError> {
         let write_tx = self.db.begin_write().map_err(redb::Error::from)?;
         self.persist_last_revealed(&write_tx, &changeset.last_revealed)?;
         self.persist_spks(&write_tx, &changeset.spk_cache)?;
@@ -397,6 +392,7 @@ impl<'db> Store<'db> {
         write_tx: &WriteTransaction,
         read_tx: &ReadTransaction,
         anchors: &BTreeSet<(A, Txid)>,
+        txs: &BTreeSet<Arc<Transaction>>,
     ) -> Result<(), StoreError> {
         let mut table = write_tx
             .open_table(self.anchors_table_defn::<A>())
@@ -407,10 +403,12 @@ impl<'db> Store<'db> {
         for (anchor, txid) in anchors {
             // if the corresponding txn exists in Txs table (trying to imitate the
             // referential behavior in case of sqlite)
+            let found = txs.iter().any(|tx| tx.compute_txid() == *txid);
             if txs_table
                 .get(txid.to_byte_array())
                 .map_err(redb::Error::from)?
                 .is_some()
+                || found
             {
                 let mut bytes: [u8; 36] = [0; 36];
                 let anchor_block = anchor.anchor_block();
@@ -419,6 +417,8 @@ impl<'db> Store<'db> {
                 table
                     .insert((txid.to_byte_array(), bytes), &anchor.metadata())
                     .map_err(redb::Error::from)?;
+            } else {
+                panic!("txn corresponding to anchor must exist");
             }
         }
         Ok(())
@@ -430,6 +430,7 @@ impl<'db> Store<'db> {
         write_tx: &WriteTransaction,
         read_tx: &ReadTransaction,
         last_seen: &BTreeMap<Txid, u64>,
+        txs: &BTreeSet<Arc<Transaction>>,
     ) -> Result<(), StoreError> {
         let mut table = write_tx
             .open_table(self.last_seen_defn())
@@ -440,14 +441,18 @@ impl<'db> Store<'db> {
         for (txid, last_seen_time) in last_seen {
             // if the corresponding txn exists in Txs table (trying to duplicate the
             // referential behavior in case of sqlite)
+            let found = txs.iter().any(|tx| tx.compute_txid() == *txid);
             if txs_table
                 .get(txid.to_byte_array())
                 .map_err(redb::Error::from)?
                 .is_some()
+                || found
             {
                 table
                     .insert(txid.to_byte_array(), *last_seen_time)
                     .map_err(redb::Error::from)?;
+            } else {
+                panic!("txn must exist before persisting last_seen");
             }
         }
         Ok(())
@@ -459,6 +464,7 @@ impl<'db> Store<'db> {
         write_tx: &WriteTransaction,
         read_tx: &ReadTransaction,
         last_evicted: &BTreeMap<Txid, u64>,
+        txs: &BTreeSet<Arc<Transaction>>,
     ) -> Result<(), StoreError> {
         let mut table = write_tx
             .open_table(self.last_evicted_table_defn())
@@ -466,17 +472,21 @@ impl<'db> Store<'db> {
         let txs_table = read_tx
             .open_table(self.txs_table_defn())
             .map_err(redb::Error::from)?;
-        for (tx, last_evicted_time) in last_evicted {
+        for (txid, last_evicted_time) in last_evicted {
             // if the corresponding txn exists in Txs table (trying to duplicate the
             // referential behavior in case of sqlite)
+            let found = txs.iter().any(|tx| tx.compute_txid() == *txid);
             if txs_table
-                .get(tx.to_byte_array())
+                .get(txid.to_byte_array())
                 .map_err(redb::Error::from)?
                 .is_some()
+                || found
             {
                 table
-                    .insert(tx.to_byte_array(), last_evicted_time)
+                    .insert(txid.to_byte_array(), last_evicted_time)
                     .map_err(redb::Error::from)?;
+            } else {
+                panic!("txn must exist before persisting last_evicted");
             }
         }
         Ok(())
@@ -488,6 +498,7 @@ impl<'db> Store<'db> {
         write_tx: &WriteTransaction,
         read_tx: &ReadTransaction,
         first_seen: &BTreeMap<Txid, u64>,
+        txs: &BTreeSet<Arc<Transaction>>,
     ) -> Result<(), StoreError> {
         let mut table = write_tx
             .open_table(self.first_seen_table_defn())
@@ -495,17 +506,21 @@ impl<'db> Store<'db> {
         let txs_table = read_tx
             .open_table(self.txs_table_defn())
             .map_err(redb::Error::from)?;
-        for (tx, first_seen_time) in first_seen {
+        for (txid, first_seen_time) in first_seen {
             // if the corresponding txn exists in Txs table (trying to duplicate the
             // referential behavior in case of sqlite)
+            let found = txs.iter().any(|tx| tx.compute_txid() == *txid);
             if txs_table
-                .get(tx.to_byte_array())
+                .get(txid.to_byte_array())
                 .map_err(redb::Error::from)?
                 .is_some()
+                || found
             {
                 table
-                    .insert(tx.to_byte_array(), first_seen_time)
+                    .insert(txid.to_byte_array(), first_seen_time)
                     .map_err(redb::Error::from)?;
+            } else {
+                panic!("txn must exist before persisting first_seen");
             }
         }
         Ok(())
@@ -1102,13 +1117,12 @@ mod test {
         let write_tx = store.db.begin_write().unwrap();
         let _ = write_tx.open_table(store.txs_table_defn()).unwrap();
         let _ = write_tx.open_table(store.last_seen_defn()).unwrap();
-        store.persist_txs(&write_tx, &txs).unwrap();
         write_tx.commit().unwrap();
 
         let write_tx = store.db.begin_write().unwrap();
         let read_tx = store.db.begin_read().unwrap();
         store
-            .persist_last_seen(&write_tx, &read_tx, &last_seen)
+            .persist_last_seen(&write_tx, &read_tx, &last_seen, &txs)
             .unwrap();
         write_tx.commit().unwrap();
 
@@ -1124,13 +1138,12 @@ mod test {
         let write_tx = store.db.begin_write().unwrap();
         let _ = write_tx.open_table(store.txs_table_defn()).unwrap();
         let _ = write_tx.open_table(store.last_seen_defn()).unwrap();
-        store.persist_txs(&write_tx, &txs_new).unwrap();
         write_tx.commit().unwrap();
 
         let write_tx = store.db.begin_write().unwrap();
         let read_tx = store.db.begin_read().unwrap();
         store
-            .persist_last_seen(&write_tx, &read_tx, &last_seen_new)
+            .persist_last_seen(&write_tx, &read_tx, &last_seen_new, &txs_new)
             .unwrap();
         write_tx.commit().unwrap();
 
@@ -1160,13 +1173,12 @@ mod test {
         let _ = write_tx
             .open_table(store.last_evicted_table_defn())
             .unwrap();
-        store.persist_txs(&write_tx, &txs).unwrap();
         write_tx.commit().unwrap();
 
         let write_tx = store.db.begin_write().unwrap();
         let read_tx = store.db.begin_read().unwrap();
         store
-            .persist_last_evicted(&write_tx, &read_tx, &last_evicted)
+            .persist_last_evicted(&write_tx, &read_tx, &last_evicted, &txs)
             .unwrap();
         write_tx.commit().unwrap();
 
@@ -1185,13 +1197,12 @@ mod test {
         let _ = write_tx
             .open_table(store.last_evicted_table_defn())
             .unwrap();
-        store.persist_txs(&write_tx, &txs_new).unwrap();
         write_tx.commit().unwrap();
 
         let write_tx = store.db.begin_write().unwrap();
         let read_tx = store.db.begin_read().unwrap();
         store
-            .persist_last_evicted(&write_tx, &read_tx, &last_evicted_new)
+            .persist_last_evicted(&write_tx, &read_tx, &last_evicted_new, &txs_new)
             .unwrap();
         write_tx.commit().unwrap();
 
@@ -1219,13 +1230,12 @@ mod test {
         let write_tx = store.db.begin_write().unwrap();
         let _ = write_tx.open_table(store.txs_table_defn()).unwrap();
         let _ = write_tx.open_table(store.first_seen_table_defn()).unwrap();
-        store.persist_txs(&write_tx, &txs).unwrap();
         write_tx.commit().unwrap();
 
         let write_tx = store.db.begin_write().unwrap();
         let read_tx = store.db.begin_read().unwrap();
         store
-            .persist_first_seen(&write_tx, &read_tx, &first_seen)
+            .persist_first_seen(&write_tx, &read_tx, &first_seen, &txs)
             .unwrap();
         write_tx.commit().unwrap();
 
@@ -1242,13 +1252,12 @@ mod test {
         let write_tx = store.db.begin_write().unwrap();
         let _ = write_tx.open_table(store.txs_table_defn()).unwrap();
         let _ = write_tx.open_table(store.first_seen_table_defn()).unwrap();
-        store.persist_txs(&write_tx, &txs_new).unwrap();
         write_tx.commit().unwrap();
 
         let write_tx = store.db.begin_write().unwrap();
         let read_tx = store.db.begin_read().unwrap();
         store
-            .persist_first_seen(&write_tx, &read_tx, &first_seen_new)
+            .persist_first_seen(&write_tx, &read_tx, &first_seen_new, &txs_new)
             .unwrap();
         write_tx.commit().unwrap();
 
@@ -1391,13 +1400,12 @@ mod test {
         let _ = write_tx
             .open_table(store.anchors_table_defn::<ConfirmationBlockTime>())
             .unwrap();
-        store.persist_txs(&write_tx, &txs).unwrap();
         write_tx.commit().unwrap();
 
         let write_tx = store.db.begin_write().unwrap();
         let read_tx = store.db.begin_read().unwrap();
         store
-            .persist_anchors(&write_tx, &read_tx, &anchors)
+            .persist_anchors(&write_tx, &read_tx, &anchors, &txs)
             .unwrap();
         read_tx.close().unwrap();
         write_tx.commit().unwrap();
@@ -1407,34 +1415,14 @@ mod test {
         store.read_anchors(&read_tx, &mut anchors_read).unwrap();
         assert_eq!(anchors_read, anchors);
 
-        let anchors_new: BTreeSet<(ConfirmationBlockTime, Txid)> =
-            [(anchor1, Txid::from_byte_array([3; 32]))].into();
-
-        let write_tx = store.db.begin_write().unwrap();
-        let read_tx = store.db.begin_read().unwrap();
-        store
-            .persist_anchors(&write_tx, &read_tx, &anchors_new)
-            .unwrap();
-        read_tx.close().unwrap();
-        write_tx.commit().unwrap();
-
-        let read_tx = store.db.begin_read().unwrap();
-        let mut anchors_read_new: BTreeSet<(ConfirmationBlockTime, Txid)> = BTreeSet::new();
-        store.read_anchors(&read_tx, &mut anchors_read_new).unwrap();
-        assert_eq!(anchors_read_new, anchors);
-
         let txs_new: BTreeSet<Arc<Transaction>> = [Arc::new(tx3.clone())].into();
         let anchors_new: BTreeSet<(ConfirmationBlockTime, Txid)> =
             [(anchor2, tx3.compute_txid())].into();
 
         let write_tx = store.db.begin_write().unwrap();
-        store.persist_txs(&write_tx, &txs_new).unwrap();
-        write_tx.commit().unwrap();
-
-        let write_tx = store.db.begin_write().unwrap();
         let read_tx = store.db.begin_read().unwrap();
         store
-            .persist_anchors(&write_tx, &read_tx, &anchors_new)
+            .persist_anchors(&write_tx, &read_tx, &anchors_new, &txs_new)
             .unwrap();
         read_tx.close().unwrap();
         write_tx.commit().unwrap();
