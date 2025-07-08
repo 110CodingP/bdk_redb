@@ -1,0 +1,100 @@
+on: [push, pull_request]
+
+name: CI
+
+permissions: {}
+
+jobs:
+
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      rust_version: ${{ steps.read_toolchain.outputs.rust_version }}
+    steps:
+      - name: "Checkout repo"
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: "Read rust version"
+        id: read_toolchain
+        run: echo "rust_version=$(cat rust-version)" >> $GITHUB_OUTPUT
+
+  build-test:
+    needs: prepare
+    name: Build & Test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os:
+          - ubuntu-latest
+          - ubuntu-24.04-arm
+        rust:
+          - version: ${{ needs.prepare.outputs.rust_version }}
+            clippy: true
+          - version: 1.63.0 # Overall MSRV
+        features:
+          - --no-default-features
+          - --all-features
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+            toolchain: ${{ matrix.rust.version }}
+            override: true
+            profile: minimal
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2.7.8
+      - name: Pin dependencies for MSRV
+        if: matrix.rust.version == '1.63.0'
+        # run: ./ci/pin-msrv.sh
+      - name: Build + Test
+        env:
+          MATRIX_RUST_VERSION: ${{ matrix.rust.version }}
+        run: |
+          cargo build ${{ matrix.features }}
+          cargo test ${{ matrix.features }}
+
+  fmt:
+    name: Rust fmt
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+            toolchain: nightly
+            override: true
+            profile: minimal
+            components: rustfmt
+      - name: Check fmt
+        run: cargo fmt --check
+
+  clippy_check:
+    needs: prepare
+    name: Rust clippy
+    runs-on: ubuntu-latest
+    permissions:
+      checks: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions-rs/toolchain@v1
+        with:
+            toolchain: ${{ needs.prepare.outputs.rust_version }}
+            components: clippy
+            override: true
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2.7.8
+      - uses: actions-rs/clippy-check@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          name: Clippy Results
+          args: --all-features --all-targets -- -D warnings
