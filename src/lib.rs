@@ -896,8 +896,7 @@ mod test {
     }
 
     fn create_test_store(db: Arc<Database>, wallet_name: &str) -> Store {
-        let store = Store::new(db, wallet_name.to_string()).unwrap();
-        store
+        Store::new(db, wallet_name.to_string()).unwrap()
     }
 
     #[test]
