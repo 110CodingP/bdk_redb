@@ -27,25 +27,25 @@
 //! use bdk_wallet::{KeychainKind, Wallet};
 //! use std::sync::Arc;
 //! use tempfile::NamedTempFile;
-//! 
+//!
 //! use anyhow::Result;
-//! 
+//!
 //! const EXTERNAL_DESCRIPTOR: &str = "tr(tprv8ZgxMBicQKsPdrjwWCyXqqJ4YqcyG4DmKtjjsRt29v1PtD3r3PuFJAjWytzcvSTKnZAGAkPSmnrdnuHWxCAwy3i1iPhrtKAfXRH7dVCNGp6/86'/1'/0'/0/*)#g9xn7wf9";
 //! const INTERNAL_DESCRIPTOR: &str = "tr(tprv8ZgxMBicQKsPdrjwWCyXqqJ4YqcyG4DmKtjjsRt29v1PtD3r3PuFJAjWytzcvSTKnZAGAkPSmnrdnuHWxCAwy3i1iPhrtKAfXRH7dVCNGp6/86'/1'/0'/1/*)#e3rjrmea";
-//! 
+//!
 //! fn main() -> Result<()> {
 //!     let network = Network::Signet;
 //!     let file_path = NamedTempFile::new()?;
 //!     let db = Arc::new(bdk_redb::redb::Database::create(file_path.path())?);
 //!     let mut store = bdk_redb::Store::new(db, "wallet1".to_string())?;
-//! 
+//!
 //!     let wallet_opt = Wallet::load()
 //!         .descriptor(KeychainKind::External, Some(EXTERNAL_DESCRIPTOR))
 //!         .descriptor(KeychainKind::Internal, Some(INTERNAL_DESCRIPTOR))
 //!         .extract_keys()
 //!         .check_network(network)
 //!         .load_wallet(&mut store)?;
-//! 
+//!
 //!     let mut wallet = match wallet_opt {
 //!         Some(wallet) => {
 //!             println!("Loaded existing wallet database.");
@@ -63,7 +63,7 @@
 //!     wallet.persist(&mut store)?;
 //!     // Only share new address with user after successfully persisting wallet
 //!     println!("Wallet address[{}]: {}", address.index, address.address);
-//! 
+//!
 //!     Ok(())
 //! }
 //! ```
@@ -100,7 +100,7 @@ const NETWORK: TableDefinition<&str, String> = TableDefinition::new("network");
 ///
 /// [`bdk_chain`]: <https://docs.rs/bdk_chain/0.23.0/bdk_chain/index.html>
 /// [`bdk_wallet`]: <https://docs.rs/bdk_wallet/2.0.0/bdk_wallet/index.html>
-
+///
 /// This is the primary struct of this crate. It holds the database corresponding to a wallet.
 /// It also holds the table names of redb tables which are specific to each wallet in a database
 /// file.

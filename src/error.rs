@@ -26,7 +26,6 @@ pub enum StoreError {
     /// Error while deserializing transaction using [`ciborium`]
     ///
     /// [`ciborium`]: <https://docs.rs/ciborium/0.2.2/ciborium/index.html>
-    ///
     #[error("ciborium deserialization error: {0}")]
     Deser(#[from] ciborium::de::Error<IoError>),
     /// Error while deserializing [`BlockHash`] from slice
