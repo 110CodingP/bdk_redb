@@ -143,8 +143,7 @@ impl Store {
         let write_tx = self.db.begin_write()?;
 
         let _ = write_tx.open_table(NETWORK)?;
-        let _ = write_tx
-            .open_table(self.keychains_table_defn())?;
+        let _ = write_tx.open_table(self.keychains_table_defn())?;
         write_tx.commit()?;
 
         self.create_local_chain_tables()?;
@@ -158,8 +157,7 @@ impl Store {
     // a new one if it doesn't exist.
     pub fn create_local_chain_tables(&self) -> Result<(), StoreError> {
         let write_tx = self.db.begin_write()?;
-        let _ = write_tx
-            .open_table(self.blocks_table_defn())?;
+        let _ = write_tx.open_table(self.blocks_table_defn())?;
         write_tx.commit()?;
         Ok(())
     }
@@ -168,24 +166,12 @@ impl Store {
     // a new one if it doesn't exist.
     pub fn create_tx_graph_tables<A: AnchorWithMetaData>(&self) -> Result<(), StoreError> {
         let write_tx = self.db.begin_write()?;
-        let _ = write_tx
-            .open_table(self.txs_table_defn())
-            ?;
-        let _ = write_tx
-            .open_table(self.txouts_table_defn())
-            ?;
-        let _ = write_tx
-            .open_table(self.anchors_table_defn::<A>())
-            ?;
-        let _ = write_tx
-            .open_table(self.last_seen_defn())
-            ?;
-        let _ = write_tx
-            .open_table(self.last_evicted_table_defn())
-            ?;
-        let _ = write_tx
-            .open_table(self.first_seen_table_defn())
-            ?;
+        let _ = write_tx.open_table(self.txs_table_defn())?;
+        let _ = write_tx.open_table(self.txouts_table_defn())?;
+        let _ = write_tx.open_table(self.anchors_table_defn::<A>())?;
+        let _ = write_tx.open_table(self.last_seen_defn())?;
+        let _ = write_tx.open_table(self.last_evicted_table_defn())?;
+        let _ = write_tx.open_table(self.first_seen_table_defn())?;
 
         write_tx.commit()?;
         Ok(())
@@ -195,22 +181,16 @@ impl Store {
     // a new one if it doesn't exist.
     pub fn create_indexer_tables(&self) -> Result<(), StoreError> {
         let write_tx = self.db.begin_write()?;
-        let _ = write_tx
-            .open_table(self.spk_table_defn())
-            ?;
+        let _ = write_tx.open_table(self.spk_table_defn())?;
 
-        let _ = write_tx
-            .open_table(self.last_revealed_table_defn())
-            ?;
+        let _ = write_tx.open_table(self.last_revealed_table_defn())?;
         write_tx.commit()?;
         Ok(())
     }
 
     pub fn create_keychains_table(&self) -> Result<(), StoreError> {
         let write_tx = self.db.begin_write()?;
-        let _ = write_tx
-            .open_table(self.keychains_table_defn())
-            ?;
+        let _ = write_tx.open_table(self.keychains_table_defn())?;
         write_tx.commit()?;
         Ok(())
     }
@@ -277,15 +257,11 @@ impl Store {
     ) -> Result<(), StoreError> {
         let write_tx = self.db.begin_write()?;
         {
-            let mut table = write_tx
-                .open_table(self.keychains_table_defn())
-                ?;
+            let mut table = write_tx.open_table(self.keychains_table_defn())?;
 
             // assuming descriptors corresponding to a label(keychain) are never modified.
             for (label, desc) in changeset {
-                table
-                    .insert(label, desc.to_string())
-                    ?;
+                table.insert(label, desc.to_string())?;
             }
         }
         write_tx.commit()?;
@@ -299,9 +275,7 @@ impl Store {
             let mut table = write_tx.open_table(NETWORK)?;
             // assuming network will be persisted once and only once
             if let Some(network) = network {
-                table
-                    .insert(&*self.wallet_name, network.to_string())
-                    ?;
+                table.insert(&*self.wallet_name, network.to_string())?;
             }
         }
         write_tx.commit()?;
@@ -326,14 +300,10 @@ impl Store {
         write_tx: &WriteTransaction,
         blocks: &BTreeMap<u32, Option<BlockHash>>,
     ) -> Result<(), StoreError> {
-        let mut table = write_tx
-            .open_table(self.blocks_table_defn())
-            ?;
+        let mut table = write_tx.open_table(self.blocks_table_defn())?;
         for (ht, hash) in blocks {
             match hash {
-                &Some(hash) => table
-                    .insert(*ht, hash.to_byte_array())
-                    ?,
+                &Some(hash) => table.insert(*ht, hash.to_byte_array())?,
                 // remove the block if hash is None
                 // assuming it is guaranteed that (ht, None) => there is an entry of form (ht,_) in
                 // the Table.
@@ -349,15 +319,11 @@ impl Store {
         write_tx: &WriteTransaction,
         txs: &BTreeSet<Arc<Transaction>>,
     ) -> Result<(), StoreError> {
-        let mut table = write_tx
-            .open_table(self.txs_table_defn())
-            ?;
+        let mut table = write_tx.open_table(self.txs_table_defn())?;
         for tx in txs {
             let mut vec: Vec<u8> = Vec::new();
             ciborium::into_writer(tx, &mut vec)?;
-            table
-                .insert(tx.compute_txid().to_byte_array(), vec)
-                ?;
+            table.insert(tx.compute_txid().to_byte_array(), vec)?;
         }
         Ok(())
     }
@@ -368,19 +334,15 @@ impl Store {
         write_tx: &WriteTransaction,
         txouts: &BTreeMap<OutPoint, TxOut>,
     ) -> Result<(), StoreError> {
-        let mut table = write_tx
-            .open_table(self.txouts_table_defn())
-            ?;
+        let mut table = write_tx.open_table(self.txouts_table_defn())?;
         for (outpoint, txout) in txouts {
-            table
-                .insert(
-                    (outpoint.txid.to_byte_array(), outpoint.vout),
-                    (
-                        txout.value.to_sat(),
-                        txout.script_pubkey.clone().into_bytes(),
-                    ),
-                )
-                ?;
+            table.insert(
+                (outpoint.txid.to_byte_array(), outpoint.vout),
+                (
+                    txout.value.to_sat(),
+                    txout.script_pubkey.clone().into_bytes(),
+                ),
+            )?;
         }
         Ok(())
     }
@@ -393,29 +355,18 @@ impl Store {
         anchors: &BTreeSet<(A, Txid)>,
         txs: &BTreeSet<Arc<Transaction>>,
     ) -> Result<(), StoreError> {
-        let mut table = write_tx
-            .open_table(self.anchors_table_defn::<A>())
-            ?;
-        let txs_table = read_tx
-            .open_table(self.txs_table_defn())
-            ?;
+        let mut table = write_tx.open_table(self.anchors_table_defn::<A>())?;
+        let txs_table = read_tx.open_table(self.txs_table_defn())?;
         for (anchor, txid) in anchors {
             // if the corresponding txn exists in Txs table (trying to imitate the
             // referential behavior in case of sqlite)
             let found = txs.iter().any(|tx| tx.compute_txid() == *txid);
-            if txs_table
-                .get(txid.to_byte_array())
-                ?
-                .is_some()
-                || found
-            {
+            if txs_table.get(txid.to_byte_array())?.is_some() || found {
                 let mut bytes: [u8; 36] = [0; 36];
                 let anchor_block = anchor.anchor_block();
                 bytes[0..4].copy_from_slice(&anchor_block.height.to_le_bytes());
                 bytes[4..].copy_from_slice(&anchor_block.hash.to_byte_array());
-                table
-                    .insert((txid.to_byte_array(), bytes), &anchor.metadata())
-                    ?;
+                table.insert((txid.to_byte_array(), bytes), &anchor.metadata())?;
             } else {
                 panic!("txn corresponding to anchor must exist");
             }
@@ -431,25 +382,14 @@ impl Store {
         last_seen: &BTreeMap<Txid, u64>,
         txs: &BTreeSet<Arc<Transaction>>,
     ) -> Result<(), StoreError> {
-        let mut table = write_tx
-            .open_table(self.last_seen_defn())
-            ?;
-        let txs_table = read_tx
-            .open_table(self.txs_table_defn())
-            ?;
+        let mut table = write_tx.open_table(self.last_seen_defn())?;
+        let txs_table = read_tx.open_table(self.txs_table_defn())?;
         for (txid, last_seen_time) in last_seen {
             // if the corresponding txn exists in Txs table (trying to duplicate the
             // referential behavior in case of sqlite)
             let found = txs.iter().any(|tx| tx.compute_txid() == *txid);
-            if txs_table
-                .get(txid.to_byte_array())
-                ?
-                .is_some()
-                || found
-            {
-                table
-                    .insert(txid.to_byte_array(), *last_seen_time)
-                    ?;
+            if txs_table.get(txid.to_byte_array())?.is_some() || found {
+                table.insert(txid.to_byte_array(), *last_seen_time)?;
             } else {
                 panic!("txn must exist before persisting last_seen");
             }
@@ -465,25 +405,14 @@ impl Store {
         last_evicted: &BTreeMap<Txid, u64>,
         txs: &BTreeSet<Arc<Transaction>>,
     ) -> Result<(), StoreError> {
-        let mut table = write_tx
-            .open_table(self.last_evicted_table_defn())
-            ?;
-        let txs_table = read_tx
-            .open_table(self.txs_table_defn())
-            ?;
+        let mut table = write_tx.open_table(self.last_evicted_table_defn())?;
+        let txs_table = read_tx.open_table(self.txs_table_defn())?;
         for (txid, last_evicted_time) in last_evicted {
             // if the corresponding txn exists in Txs table (trying to duplicate the
             // referential behavior in case of sqlite)
             let found = txs.iter().any(|tx| tx.compute_txid() == *txid);
-            if txs_table
-                .get(txid.to_byte_array())
-                ?
-                .is_some()
-                || found
-            {
-                table
-                    .insert(txid.to_byte_array(), last_evicted_time)
-                    ?;
+            if txs_table.get(txid.to_byte_array())?.is_some() || found {
+                table.insert(txid.to_byte_array(), last_evicted_time)?;
             } else {
                 panic!("txn must exist before persisting last_evicted");
             }
@@ -499,25 +428,14 @@ impl Store {
         first_seen: &BTreeMap<Txid, u64>,
         txs: &BTreeSet<Arc<Transaction>>,
     ) -> Result<(), StoreError> {
-        let mut table = write_tx
-            .open_table(self.first_seen_table_defn())
-            ?;
-        let txs_table = read_tx
-            .open_table(self.txs_table_defn())
-            ?;
+        let mut table = write_tx.open_table(self.first_seen_table_defn())?;
+        let txs_table = read_tx.open_table(self.txs_table_defn())?;
         for (txid, first_seen_time) in first_seen {
             // if the corresponding txn exists in Txs table (trying to duplicate the
             // referential behavior in case of sqlite)
             let found = txs.iter().any(|tx| tx.compute_txid() == *txid);
-            if txs_table
-                .get(txid.to_byte_array())
-                ?
-                .is_some()
-                || found
-            {
-                table
-                    .insert(txid.to_byte_array(), first_seen_time)
-                    ?;
+            if txs_table.get(txid.to_byte_array())?.is_some() || found {
+                table.insert(txid.to_byte_array(), first_seen_time)?;
             } else {
                 panic!("txn must exist before persisting first_seen");
             }
@@ -531,13 +449,9 @@ impl Store {
         write_tx: &WriteTransaction,
         last_revealed: &BTreeMap<DescriptorId, u32>,
     ) -> Result<(), StoreError> {
-        let mut table = write_tx
-            .open_table(self.last_revealed_table_defn())
-            ?;
+        let mut table = write_tx.open_table(self.last_revealed_table_defn())?;
         for (&desc, &idx) in last_revealed {
-            table
-                .insert(desc.to_byte_array(), idx)
-                ?;
+            table.insert(desc.to_byte_array(), idx)?;
         }
         Ok(())
     }
@@ -548,17 +462,13 @@ impl Store {
         write_tx: &WriteTransaction,
         spk_cache: &BTreeMap<DescriptorId, BTreeMap<u32, ScriptBuf>>,
     ) -> Result<(), StoreError> {
-        let mut table = write_tx
-            .open_table(self.spk_table_defn())
-            ?;
+        let mut table = write_tx.open_table(self.spk_table_defn())?;
         for (&desc, map) in spk_cache {
-            map.iter()
-                .try_for_each(|entry| {
-                    table
-                        .insert((desc.to_byte_array(), *entry.0), entry.1.to_bytes())
-                        .map(|_| ())
-                })
-                ?;
+            map.iter().try_for_each(|entry| {
+                table
+                    .insert((desc.to_byte_array(), *entry.0), entry.1.to_bytes())
+                    .map(|_| ())
+            })?;
         }
         Ok(())
     }
@@ -617,9 +527,7 @@ impl Store {
         desc_changeset: &mut BTreeMap<u64, Descriptor<DescriptorPublicKey>>,
     ) -> Result<(), StoreError> {
         let read_tx = self.db.begin_read()?;
-        let table = read_tx
-            .open_table(self.keychains_table_defn())
-            ?;
+        let table = read_tx.open_table(self.keychains_table_defn())?;
 
         for entry in table.iter()? {
             let (label, keychain) = entry?;
@@ -638,8 +546,7 @@ impl Store {
         let read_tx = self.db.begin_read()?;
         let table = read_tx.open_table(NETWORK)?;
         *network = table
-            .get(&*self.wallet_name)
-            ?
+            .get(&*self.wallet_name)?
             .map(|network| Network::from_str(&network.value()).expect("should be valid network"));
         Ok(())
     }
@@ -661,9 +568,7 @@ impl Store {
         read_tx: &ReadTransaction,
         blocks: &mut BTreeMap<u32, Option<BlockHash>>,
     ) -> Result<(), StoreError> {
-        let table = read_tx
-            .open_table(self.blocks_table_defn())
-            ?;
+        let table = read_tx.open_table(self.blocks_table_defn())?;
 
         for entry in table.iter()? {
             let (height, hash) = entry?;
@@ -682,9 +587,7 @@ impl Store {
         read_tx: &ReadTransaction,
         txs: &mut BTreeSet<Arc<Transaction>>,
     ) -> Result<(), StoreError> {
-        let table = read_tx
-            .open_table(self.txs_table_defn())
-            ?;
+        let table = read_tx.open_table(self.txs_table_defn())?;
 
         for entry in table.iter()? {
             let tx_vec = entry?.1.value();
@@ -700,9 +603,7 @@ impl Store {
         read_tx: &ReadTransaction,
         txouts: &mut BTreeMap<OutPoint, TxOut>,
     ) -> Result<(), StoreError> {
-        let table = read_tx
-            .open_table(self.txouts_table_defn())
-            ?;
+        let table = read_tx.open_table(self.txouts_table_defn())?;
 
         for entry in table.iter()? {
             let (outpoint, txout) = entry?;
@@ -727,9 +628,7 @@ impl Store {
         read_tx: &ReadTransaction,
         anchors: &mut BTreeSet<(A, Txid)>,
     ) -> Result<(), StoreError> {
-        let table = read_tx
-            .open_table(self.anchors_table_defn::<A>())
-            ?;
+        let table = read_tx.open_table(self.anchors_table_defn::<A>())?;
 
         for entry in table.iter()? {
             let (anchor, metadata) = entry?;
@@ -755,9 +654,7 @@ impl Store {
         read_tx: &ReadTransaction,
         last_seen: &mut BTreeMap<Txid, u64>,
     ) -> Result<(), StoreError> {
-        let table = read_tx
-            .open_table(self.last_seen_defn())
-            ?;
+        let table = read_tx.open_table(self.last_seen_defn())?;
 
         for entry in table.iter()? {
             let (txid, last_seen_num) = entry?;
@@ -772,9 +669,7 @@ impl Store {
         read_tx: &ReadTransaction,
         last_evicted: &mut BTreeMap<Txid, u64>,
     ) -> Result<(), StoreError> {
-        let table = read_tx
-            .open_table(self.last_evicted_table_defn())
-            ?;
+        let table = read_tx.open_table(self.last_evicted_table_defn())?;
 
         for entry in table.iter()? {
             let (txid, last_evicted_num) = entry?;
@@ -792,9 +687,7 @@ impl Store {
         read_tx: &ReadTransaction,
         first_seen: &mut BTreeMap<Txid, u64>,
     ) -> Result<(), StoreError> {
-        let table = read_tx
-            .open_table(self.first_seen_table_defn())
-            ?;
+        let table = read_tx.open_table(self.first_seen_table_defn())?;
 
         for entry in table.iter()? {
             let (txid, first_seen_num) = entry?;
@@ -809,9 +702,7 @@ impl Store {
         read_tx: &ReadTransaction,
         last_revealed: &mut BTreeMap<DescriptorId, u32>,
     ) -> Result<(), StoreError> {
-        let table = read_tx
-            .open_table(self.last_revealed_table_defn())
-            ?;
+        let table = read_tx.open_table(self.last_revealed_table_defn())?;
 
         for entry in table.iter()? {
             let (desc, last_revealed_idx) = entry?;
@@ -829,9 +720,7 @@ impl Store {
         read_tx: &ReadTransaction,
         spk_cache: &mut BTreeMap<DescriptorId, BTreeMap<u32, ScriptBuf>>,
     ) -> Result<(), StoreError> {
-        let table = read_tx
-            .open_table(self.spk_table_defn())
-            ?;
+        let table = read_tx.open_table(self.spk_table_defn())?;
 
         for entry in table.iter()? {
             let (desc, spk) = entry?;
@@ -894,8 +783,7 @@ mod test {
     }
 
     fn create_test_store(db: Arc<Database>, wallet_name: &str) -> Store {
-        let store = Store::new(db, wallet_name.to_string()).unwrap();
-        store
+        Store::new(db, wallet_name.to_string()).unwrap()
     }
 
     #[test]
