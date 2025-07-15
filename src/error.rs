@@ -11,6 +11,8 @@ pub enum StoreError {
     RedbCommit(#[from] redb::CommitError),
     #[error("Storage error: {0}")]
     RedbStorage(#[from] redb::StorageError),
+    #[error("Database error: {0}")]
+    RedbDatabase(#[from] redb::DatabaseError),
     #[error("ciborium serialization error: {0}")]
     Ser(#[from] ciborium::ser::Error<IoError>),
     #[error("ciborium deserialization error: {0}")]
