@@ -1,3 +1,76 @@
+//! This crate provides an alternative to the sqlite persistence backend for [`BDK`] using [`redb`],
+//! a lightweight key-value store in Rust.
+//!
+//! [`BDK`]: <https://github.com/bitcoindevkit>
+//! [`redb`]: <https://github.com/cberner/redb>
+
+//! <div class="warning">Warning: Descriptors in the following example are on a test network and
+//! only serve as an example. MAINNET funds send to addresses controlled by these will be lost! Also
+//! BDK does not store any of your descriptors!</div>
+//!
+//! # Example
+//!
+//! Add this to your Cargo.toml :
+//!
+//! ```
+//! [dependencies]
+//! anyhow = "1.0.98"
+//! bdk_redb = { git = "https://github.com/110CodingP/bdk_redb" }
+//! bdk_wallet = "2.0.0"
+//! tempfile = "3.20.0"
+//! ```
+//!
+//! Now:
+//!
+//! ```rust
+//! use bdk_wallet::bitcoin::Network;
+//! use bdk_wallet::{KeychainKind, Wallet};
+//! use std::sync::Arc;
+//! use tempfile::NamedTempFile;
+//! 
+//! use anyhow::Result;
+//! 
+//! const EXTERNAL_DESCRIPTOR: &str = "tr(tprv8ZgxMBicQKsPdrjwWCyXqqJ4YqcyG4DmKtjjsRt29v1PtD3r3PuFJAjWytzcvSTKnZAGAkPSmnrdnuHWxCAwy3i1iPhrtKAfXRH7dVCNGp6/86'/1'/0'/0/*)#g9xn7wf9";
+//! const INTERNAL_DESCRIPTOR: &str = "tr(tprv8ZgxMBicQKsPdrjwWCyXqqJ4YqcyG4DmKtjjsRt29v1PtD3r3PuFJAjWytzcvSTKnZAGAkPSmnrdnuHWxCAwy3i1iPhrtKAfXRH7dVCNGp6/86'/1'/0'/1/*)#e3rjrmea";
+//! 
+//! fn main() -> Result<()> {
+//!     let network = Network::Signet;
+//!     let file_path = NamedTempFile::new()?;
+//!     let db = Arc::new(bdk_redb::redb::Database::create(file_path.path())?);
+//!     let mut store = bdk_redb::Store::new(db, "wallet1".to_string())?;
+//! 
+//!     let wallet_opt = Wallet::load()
+//!         .descriptor(KeychainKind::External, Some(EXTERNAL_DESCRIPTOR))
+//!         .descriptor(KeychainKind::Internal, Some(INTERNAL_DESCRIPTOR))
+//!         .extract_keys()
+//!         .check_network(network)
+//!         .load_wallet(&mut store)?;
+//! 
+//!     let mut wallet = match wallet_opt {
+//!         Some(wallet) => {
+//!             println!("Loaded existing wallet database.");
+//!             wallet
+//!         }
+//!         None => {
+//!             println!("Creating new wallet database.");
+//!             Wallet::create(EXTERNAL_DESCRIPTOR, INTERNAL_DESCRIPTOR)
+//!                 .network(network)
+//!                 .create_wallet(&mut store)?
+//!         }
+//!     };
+//!     // Reveal a new address from your external keychain
+//!     let address = wallet.reveal_next_address(KeychainKind::External);
+//!     wallet.persist(&mut store)?;
+//!     // Only share new address with user after successfully persisting wallet
+//!     println!("Wallet address[{}]: {}", address.index, address.address);
+//! 
+//!     Ok(())
+//! }
+//! ```
+
+//! Also note that [`BDK`] uses structures called ChangeSets for persistence so while the
+//! documentation of each function links to the structures it is trying to eventually persist, the
+//! function actually uses the corresponding ChangeSets.
 pub use redb;
 
 pub mod anchor_trait;
@@ -19,16 +92,26 @@ use std::sync::Arc;
 #[cfg(feature = "wallet")]
 use bdk_chain::ConfirmationBlockTime;
 
-// The following table stores (wallet_name, network) pairs. This is common to all wallets in
-// a database file.
+/// The following table stores (wallet_name, network) pairs. This is common to all wallets in
+/// a database file.
 const NETWORK: TableDefinition<&str, String> = TableDefinition::new("network");
 
-// This is the primary struct of this crate. It holds the database corresponding to a wallet.
-// It also holds the table names of tables which are specific to each wallet in a database file.
+/// Persists the [`bdk_chain`] and [`bdk_wallet`] structures in a [`redb`] database.
+///
+/// [`bdk_chain`]: <https://docs.rs/bdk_chain/0.23.0/bdk_chain/index.html>
+/// [`bdk_wallet`]: <https://docs.rs/bdk_wallet/2.0.0/bdk_wallet/index.html>
+
+/// This is the primary struct of this crate. It holds the database corresponding to a wallet.
+/// It also holds the table names of redb tables which are specific to each wallet in a database
+/// file.
 pub struct Store {
+    // We use a reference so as to avoid taking ownership of the Database, allowing other
+    // applications to write to it. Arc is for thread safety.
     db: Arc<Database>,
     wallet_name: String,
 
+    // These could be removed if we can find a way to combine a String and an &str to create a
+    // String without using unsafe Rust.
     keychain_table_name: String,
     last_revealed_table_name: String,
     blocks_table_name: String,
@@ -42,8 +125,7 @@ pub struct Store {
 }
 
 impl Store {
-    // This table stores (keychain, Descriptor) pairs on a high level.
-    // keychain is as in bdk_wallet#230 .
+    // This table stores (KeychainKind, Descriptor) pairs on a high level.
     fn keychains_table_defn(&self) -> TableDefinition<u64, String> {
         TableDefinition::new(&self.keychain_table_name)
     }
@@ -53,19 +135,20 @@ impl Store {
         TableDefinition::new(&self.blocks_table_name)
     }
 
-    // This table stores (height, BlockHash) pairs on a high level.
+    // This table stores (Txid, Transaction) pairs on a high level.
     fn txs_table_defn(&self) -> TableDefinition<[u8; 32], Vec<u8>> {
         TableDefinition::new(&self.txs_table_name)
     }
 
     // This table stores (Outpoint, TxOut) pairs on a high level.
+    // where Outpoint = (Txid, vout) and TxOut = (value, script_pubkey)
     fn txouts_table_defn(&self) -> TableDefinition<([u8; 32], u32), (u64, Vec<u8>)> {
         TableDefinition::new(&self.txouts_table_name)
     }
 
     // This table stores ((Txid, BlockId), Metadata) pairs on a high level where Metadata refers to
     // extra information stored inside the anchor. For example confirmation time would be metadata
-    // in case of ConfirmationBlockTime.
+    // in case of ConfirmationBlockTime and None in case of BlockId.
     // The key was chosen like this because a transaction can be anchored in multiple Blocks
     // (in different chains ) and a Block can anchor multiple transactions.
     fn anchors_table_defn<A: AnchorWithMetaData>(
@@ -99,7 +182,9 @@ impl Store {
         TableDefinition::new(&self.spk_table_name)
     }
 
-    // This function creates a brand new `Store`.
+    /// This function creates a brand new [`Store`].
+    ///
+    /// [`Store`]: crate::Store
     pub fn new(db: Arc<Database>, wallet_name: String) -> Result<Self, StoreError> {
         // Create table names to be stored in the Store.
         let mut keychain_table_name = wallet_name.clone();
@@ -138,7 +223,10 @@ impl Store {
         })
     }
 
-    // This function initializes all tables since open_table creates a new one if it doesn't exist.
+    /// This function creates or opens (if already created) all redb tables corresponding to a
+    /// [`Wallet`].
+    ///
+    /// [`Wallet`]: <https://docs.rs/bdk_wallet/2.0.0/bdk_wallet/struct.Wallet.html>
     pub fn create_tables<A: AnchorWithMetaData>(&self) -> Result<(), StoreError> {
         let write_tx = self.db.begin_write()?;
 
@@ -153,8 +241,8 @@ impl Store {
         Ok(())
     }
 
-    // This function initializes tables corresponding to local_chain since open_table creates
-    // a new one if it doesn't exist.
+    /// This function creates or opens (if already created) the redb tables corresponding to
+    /// local_chain.
     pub fn create_local_chain_tables(&self) -> Result<(), StoreError> {
         let write_tx = self.db.begin_write()?;
         let _ = write_tx.open_table(self.blocks_table_defn())?;
@@ -162,8 +250,10 @@ impl Store {
         Ok(())
     }
 
-    // This function initializes tables corresponding to tx_graph since open_table creates
-    // a new one if it doesn't exist.
+    /// This function creates or opens (if already created) the redb tables corresponding to
+    /// [`TxGraph`].
+    ///
+    /// [`TxGraph`]: <http://docs.rs/bdk_chain/0.23.0/bdk_chain/tx_graph/struct.TxGraph.html>
     pub fn create_tx_graph_tables<A: AnchorWithMetaData>(&self) -> Result<(), StoreError> {
         let write_tx = self.db.begin_write()?;
         let _ = write_tx.open_table(self.txs_table_defn())?;
@@ -177,8 +267,10 @@ impl Store {
         Ok(())
     }
 
-    // This function initializes tables corresponding to indexer since open_table creates
-    // a new one if it doesn't exist.
+    /// This function creates or opens (if already created) the redb tables corresponding to
+    /// [`indexer`].
+    ///
+    /// [`indexer`]: <https://docs.rs/bdk_chain/0.23.0/bdk_chain/indexer/index.html>
     pub fn create_indexer_tables(&self) -> Result<(), StoreError> {
         let write_tx = self.db.begin_write()?;
         let _ = write_tx.open_table(self.spk_table_defn())?;
@@ -188,6 +280,8 @@ impl Store {
         Ok(())
     }
 
+    /// This function creates or opens (if already created) the keychains redb table corresponding
+    /// to the wallet.
     pub fn create_keychains_table(&self) -> Result<(), StoreError> {
         let write_tx = self.db.begin_write()?;
         let _ = write_tx.open_table(self.keychains_table_defn())?;
@@ -195,6 +289,10 @@ impl Store {
         Ok(())
     }
 
+    /// This function creates or opens (if already created) the [`Network`] redb table. This table
+    /// is common to all wallets persisted in the database file.
+    ///
+    /// [`Network`]: <https://docs.rs/bitcoin/latest/bitcoin/enum.Network.html>
     pub fn create_network_table(&self) -> Result<(), StoreError> {
         let write_tx = self.db.begin_write()?;
         let _ = write_tx.open_table(NETWORK)?;
@@ -203,9 +301,11 @@ impl Store {
     }
 
     #[cfg(feature = "wallet")]
-    // This function persists `bdk_wallet::Changeset` into our db. It persists each field by calling
-    // corresponding persistence functions.
-    pub fn persist_changeset(&self, changeset: &ChangeSet) -> Result<(), StoreError> {
+    /// This function persists the [`Wallet`] into our db. It persists each field by calling
+    /// corresponding persistence functions.
+    ///
+    /// [`Wallet`]: <https://docs.rs/bdk_wallet/2.0.0/bdk_wallet/struct.Wallet.html>
+    pub fn persist_wallet(&self, changeset: &ChangeSet) -> Result<(), StoreError> {
         self.persist_network(&changeset.network)?;
         let mut desc_changeset: BTreeMap<u64, Descriptor<DescriptorPublicKey>> = BTreeMap::new();
         if let Some(desc) = &changeset.descriptor {
@@ -221,8 +321,10 @@ impl Store {
         Ok(())
     }
 
-    // This function persists `bdk_chain::tx_graph::Changeset` into our db. It persists each field
-    // by calling corresponding persistence functions.
+    /// This function persists the [`TxGraph`] into our db. It persists each field
+    /// by calling corresponding persistence functions.
+    ///
+    /// [`TxGraph`]: <http://docs.rs/bdk_chain/0.23.0/bdk_chain/tx_graph/struct.TxGraph.html>
     pub fn persist_tx_graph<A: AnchorWithMetaData>(
         &self,
         changeset: &tx_graph::ChangeSet<A>,
@@ -239,8 +341,10 @@ impl Store {
         Ok(())
     }
 
-    // This function persists `indexer::keychain_txout::Changeset` into our db. It persists each
-    // field by calling corresponding persistence functions.
+    /// This function persists the [`indexer`] structures into our db. It persists each
+    /// field by calling corresponding persistence functions.
+    ///
+    /// [`indexer`]: <https://docs.rs/bdk_chain/0.23.0/bdk_chain/indexer/index.html>
     pub fn persist_indexer(&self, changeset: &keychain_txout::ChangeSet) -> Result<(), StoreError> {
         let write_tx = self.db.begin_write()?;
         self.persist_last_revealed(&write_tx, &changeset.last_revealed)?;
@@ -249,7 +353,7 @@ impl Store {
         Ok(())
     }
 
-    // This function persists the descriptors into our db.
+    /// This function persists the descriptors into our db.
     pub fn persist_keychains(
         &self,
         // maps label to descriptor
@@ -268,7 +372,10 @@ impl Store {
         Ok(())
     }
 
-    // This function persists the network into our db.
+    /// This function persists the [`Network`] into our db.
+    /// <div class="warning">Warning: Do Not use with MAINNET</div>
+    ///
+    /// [`Network`]: <https://docs.rs/bitcoin/latest/bitcoin/enum.Network.html>
     pub fn persist_network(&self, network: &Option<bitcoin::Network>) -> Result<(), StoreError> {
         let write_tx = self.db.begin_write()?;
         {
@@ -282,8 +389,10 @@ impl Store {
         Ok(())
     }
 
-    // This function persists `bdk_chain::local_chain::Changeset` by calling the corresponding
-    // persistence function for `blocks`.
+    /// This function persists the [`LocalChain`] structure into our db. It persists each
+    /// field by calling corresponding persistence functions.
+    ///
+    /// [`LocalChain`]: <http://docs.rs/bdk_chain/0.23.0/bdk_chain/local_chain/struct.LocalChain.html>
     pub fn persist_local_chain(
         &self,
         changeset: &local_chain::ChangeSet,
@@ -474,9 +583,11 @@ impl Store {
     }
 
     #[cfg(feature = "wallet")]
-    // This function loads `bdk_wallet::Changeset` from db. It calls the corresponding load
-    // functions for each of its fields.
-    pub fn read_changeset(&self, changeset: &mut ChangeSet) -> Result<(), StoreError> {
+    /// This function loads the [`Wallet`]  by calling corresponding load functions for each of its
+    /// fields.s
+    ///
+    /// [`Wallet`]: <https://docs.rs/bdk_wallet/2.0.0/bdk_wallet/struct.Wallet.html>
+    pub fn read_wallet(&self, changeset: &mut ChangeSet) -> Result<(), StoreError> {
         self.read_network(&mut changeset.network)?;
         let mut desc_changeset: BTreeMap<u64, Descriptor<DescriptorPublicKey>> = BTreeMap::new();
         self.read_keychains(&mut desc_changeset)?;
@@ -493,8 +604,10 @@ impl Store {
         Ok(())
     }
 
-    // This function loads `bdk_chain::tx_graph::Changeset` from db. It calls the corresponding load
-    // functions for each of its fields.
+    /// This function loads the [`TxGraph`] from db. It loads each field
+    /// by calling corresponding load functions.
+    ///
+    /// [`TxGraph`]: <http://docs.rs/bdk_chain/0.23.0/bdk_chain/tx_graph/struct.TxGraph.html>
     pub fn read_tx_graph<A: AnchorWithMetaData>(
         &self,
         changeset: &mut tx_graph::ChangeSet<A>,
@@ -509,8 +622,10 @@ impl Store {
         Ok(())
     }
 
-    // This function loads `bdk_chain::indexer::keychain_txout` from db. It calls the corresponding
-    // load functions for each of its fields.
+    /// This function loads the [`indexer`] structures from our db. It loads each
+    /// field by calling corresponding load functions.
+    ///
+    /// [`indexer`]: <https://docs.rs/bdk_chain/0.23.0/bdk_chain/indexer/index.html>
     pub fn read_indexer(
         &self,
         changeset: &mut keychain_txout::ChangeSet,
@@ -521,7 +636,7 @@ impl Store {
         Ok(())
     }
 
-    // This function loads descriptors from db.
+    /// This function loads descriptors from db.
     pub fn read_keychains(
         &self,
         desc_changeset: &mut BTreeMap<u64, Descriptor<DescriptorPublicKey>>,
@@ -541,7 +656,10 @@ impl Store {
         Ok(())
     }
 
-    // This function loads network from db.
+    /// This function loads the [`Network`] from our db.
+    /// <div class="warning">Warning: Do Not use with MAINNET</div>
+    ///
+    /// [`Network`]: <https://docs.rs/bitcoin/latest/bitcoin/enum.Network.html>
     pub fn read_network(&self, network: &mut Option<bitcoin::Network>) -> Result<(), StoreError> {
         let read_tx = self.db.begin_read()?;
         let table = read_tx.open_table(NETWORK)?;
@@ -551,8 +669,10 @@ impl Store {
         Ok(())
     }
 
-    // This function loads `bdk_chain::local_chain` from db. It calls the corresponding load
-    // function for blocks.
+    /// This function loads the [`LocalChain`] structure from our db. It loads each
+    /// field by calling corresponding load functions.
+    ///
+    /// [`LocalChain`]: <http://docs.rs/bdk_chain/0.23.0/bdk_chain/local_chain/struct.LocalChain.html>
     pub fn read_local_chain(
         &self,
         changeset: &mut local_chain::ChangeSet,
@@ -739,12 +859,12 @@ impl WalletPersister for Store {
     fn initialize(persister: &mut Self) -> Result<ChangeSet, Self::Error> {
         persister.create_tables::<ConfirmationBlockTime>()?;
         let mut changeset = ChangeSet::default();
-        persister.read_changeset(&mut changeset)?;
+        persister.read_wallet(&mut changeset)?;
         Ok(changeset)
     }
 
     fn persist(persister: &mut Self, changeset: &ChangeSet) -> Result<(), Self::Error> {
-        persister.persist_changeset(changeset)?;
+        persister.persist_wallet(changeset)?;
         Ok(())
     }
 }
@@ -1640,7 +1760,7 @@ mod test {
 
     #[cfg(feature = "wallet")]
     #[test]
-    fn test_persist_changeset() {
+    fn test_persist_wallet() {
         let tmpfile = NamedTempFile::new().unwrap();
         let db = create_db(tmpfile.path());
         let store = create_test_store(Arc::new(db), "wallet1");
@@ -1709,9 +1829,9 @@ mod test {
 
         store.create_tables::<ConfirmationBlockTime>().unwrap();
 
-        store.persist_changeset(&changeset).unwrap();
+        store.persist_wallet(&changeset).unwrap();
         let mut changeset_read = ChangeSet::default();
-        store.read_changeset(&mut changeset_read).unwrap();
+        store.read_wallet(&mut changeset_read).unwrap();
 
         assert_eq!(changeset, changeset_read);
 
@@ -1761,9 +1881,9 @@ mod test {
             indexer: keychain_txout_changeset,
         };
 
-        store.persist_changeset(&changeset_new).unwrap();
+        store.persist_wallet(&changeset_new).unwrap();
         let mut changeset_read_new = ChangeSet::default();
-        store.read_changeset(&mut changeset_read_new).unwrap();
+        store.read_wallet(&mut changeset_read_new).unwrap();
 
         changeset.merge(changeset_new);
 
