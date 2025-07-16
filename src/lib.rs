@@ -3,7 +3,7 @@
 //!
 //! [`BDK`]: <https://github.com/bitcoindevkit>
 //! [`redb`]: <https://github.com/cberner/redb>
-
+//! 
 //! <div class="warning">Warning: Descriptors in the following example are on a test network and
 //! only serve as an example. MAINNET funds send to addresses controlled by these will be lost! Also
 //! BDK does not store any of your descriptors!</div>
@@ -12,7 +12,7 @@
 //!
 //! Add this to your Cargo.toml :
 //!
-//! ```
+//! ```toml
 //! [dependencies]
 //! anyhow = "1.0.98"
 //! bdk_redb = { git = "https://github.com/110CodingP/bdk_redb" }
@@ -23,49 +23,52 @@
 //! Now:
 //!
 //! ```rust
-//! use bdk_wallet::bitcoin::Network;
-//! use bdk_wallet::{KeychainKind, Wallet};
-//! use std::sync::Arc;
-//! use tempfile::NamedTempFile;
-//!
-//! use anyhow::Result;
-//!
-//! const EXTERNAL_DESCRIPTOR: &str = "tr(tprv8ZgxMBicQKsPdrjwWCyXqqJ4YqcyG4DmKtjjsRt29v1PtD3r3PuFJAjWytzcvSTKnZAGAkPSmnrdnuHWxCAwy3i1iPhrtKAfXRH7dVCNGp6/86'/1'/0'/0/*)#g9xn7wf9";
-//! const INTERNAL_DESCRIPTOR: &str = "tr(tprv8ZgxMBicQKsPdrjwWCyXqqJ4YqcyG4DmKtjjsRt29v1PtD3r3PuFJAjWytzcvSTKnZAGAkPSmnrdnuHWxCAwy3i1iPhrtKAfXRH7dVCNGp6/86'/1'/0'/1/*)#e3rjrmea";
-//!
-//! fn main() -> Result<()> {
-//!     let network = Network::Signet;
-//!     let file_path = NamedTempFile::new()?;
-//!     let db = Arc::new(bdk_redb::redb::Database::create(file_path.path())?);
-//!     let mut store = bdk_redb::Store::new(db, "wallet1".to_string())?;
-//!
-//!     let wallet_opt = Wallet::load()
-//!         .descriptor(KeychainKind::External, Some(EXTERNAL_DESCRIPTOR))
-//!         .descriptor(KeychainKind::Internal, Some(INTERNAL_DESCRIPTOR))
-//!         .extract_keys()
-//!         .check_network(network)
-//!         .load_wallet(&mut store)?;
-//!
-//!     let mut wallet = match wallet_opt {
-//!         Some(wallet) => {
-//!             println!("Loaded existing wallet database.");
-//!             wallet
-//!         }
-//!         None => {
-//!             println!("Creating new wallet database.");
-//!             Wallet::create(EXTERNAL_DESCRIPTOR, INTERNAL_DESCRIPTOR)
-//!                 .network(network)
-//!                 .create_wallet(&mut store)?
-//!         }
-//!     };
-//!     // Reveal a new address from your external keychain
-//!     let address = wallet.reveal_next_address(KeychainKind::External);
-//!     wallet.persist(&mut store)?;
-//!     // Only share new address with user after successfully persisting wallet
-//!     println!("Wallet address[{}]: {}", address.index, address.address);
-//!
-//!     Ok(())
-//! }
+//! # #[cfg(feature="wallet")]
+//! # mod wrapper {
+//!     use bdk_wallet::bitcoin::Network;
+//!     use bdk_wallet::{KeychainKind, Wallet};
+//!     use std::sync::Arc;
+//!     use tempfile::NamedTempFile;
+//!     
+//!     use anyhow::Result;
+//!     
+//!     const EXTERNAL_DESCRIPTOR: &str = "tr(tprv8ZgxMBicQKsPdrjwWCyXqqJ4YqcyG4DmKtjjsRt29v1PtD3r3PuFJAjWytzcvSTKnZAGAkPSmnrdnuHWxCAwy3i1iPhrtKAfXRH7dVCNGp6/86'/1'/0'/0/*)#g9xn7wf9";
+//!     const INTERNAL_DESCRIPTOR: &str = "tr(tprv8ZgxMBicQKsPdrjwWCyXqqJ4YqcyG4DmKtjjsRt29v1PtD3r3PuFJAjWytzcvSTKnZAGAkPSmnrdnuHWxCAwy3i1iPhrtKAfXRH7dVCNGp6/86'/1'/0'/1/*)#e3rjrmea";
+//!     
+//!     fn main() -> Result<()> {
+//!         let network = Network::Signet;
+//!         let file_path = NamedTempFile::new()?;
+//!         let db = Arc::new(bdk_redb::redb::Database::create(file_path.path())?);
+//!         let mut store = bdk_redb::Store::new(db, "wallet1".to_string())?;
+//!     
+//!         let wallet_opt = Wallet::load()
+//!             .descriptor(KeychainKind::External, Some(EXTERNAL_DESCRIPTOR))
+//!             .descriptor(KeychainKind::Internal, Some(INTERNAL_DESCRIPTOR))
+//!             .extract_keys()
+//!             .check_network(network)
+//!             .load_wallet(&mut store)?;
+//!     
+//!         let mut wallet = match wallet_opt {
+//!             Some(wallet) => {
+//!                 println!("Loaded existing wallet database.");
+//!                 wallet
+//!             }
+//!             None => {
+//!                 println!("Creating new wallet database.");
+//!                 Wallet::create(EXTERNAL_DESCRIPTOR, INTERNAL_DESCRIPTOR)
+//!                     .network(network)
+//!                     .create_wallet(&mut store)?
+//!             }
+//!         };
+//!         // Reveal a new address from your external keychain
+//!         let address = wallet.reveal_next_address(KeychainKind::External);
+//!         wallet.persist(&mut store)?;
+//!         // Only share new address with user after successfully persisting wallet
+//!         println!("Wallet address[{}]: {}", address.index, address.address);
+//!     
+//!         Ok(())
+//!     }
+//! # }
 //! ```
 
 //! Also note that [`BDK`] uses structures called ChangeSets for persistence so while the
