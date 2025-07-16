@@ -3,7 +3,7 @@
 //!
 //! [`BDK`]: <https://github.com/bitcoindevkit>
 //! [`redb`]: <https://github.com/cberner/redb>
-//! 
+//!
 //! <div class="warning">Warning: Descriptors in the following example are on a test network and
 //! only serve as an example. MAINNET funds send to addresses controlled by these will be lost! Also
 //! BDK does not store any of your descriptors!</div>
