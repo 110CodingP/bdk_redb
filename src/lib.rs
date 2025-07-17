@@ -5,7 +5,7 @@
 //! [`redb`]: <https://github.com/cberner/redb>
 //!
 //! <div class="warning">Warning: Descriptors in the following example are on a test network and
-//! only serve as an example. MAINNET funds send to addresses controlled by these will be lost!
+//! only serve as an example. MAINNET funds sent to addresses controlled by these will be lost!
 //! </div>
 //!
 //! # Example
