@@ -5,7 +5,8 @@
 //! [`redb`]: <https://github.com/cberner/redb>
 //!
 //! <div class="warning">Warning: Descriptors in the following example are on a test network and
-//! only serve as an example. MAINNET funds send to addresses controlled by these will be lost! </div>
+//! only serve as an example. MAINNET funds send to addresses controlled by these will be lost!
+//! </div>
 //!
 //! # Example
 //!
@@ -1558,7 +1559,6 @@ mod test {
         let store = create_test_store(Arc::new(db), "wallet1");
 
         let descriptor_ids = utils::DESCRIPTORS.map(|d| parse_descriptor(d).descriptor_id());
-
 
         let mut last_revealed: BTreeMap<DescriptorId, u32> =
             [(descriptor_ids[0], 1), (descriptor_ids[1], 100)].into();
