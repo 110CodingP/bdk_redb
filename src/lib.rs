@@ -5,8 +5,7 @@
 //! [`redb`]: <https://github.com/cberner/redb>
 //!
 //! <div class="warning">Warning: Descriptors in the following example are on a test network and
-//! only serve as an example. MAINNET funds send to addresses controlled by these will be lost! Also
-//! BDK does not store any of your descriptors!</div>
+//! only serve as an example. MAINNET funds send to addresses controlled by these will be lost! </div>
 //!
 //! # Example
 //!
@@ -892,14 +891,14 @@ mod test {
     use std::{collections::BTreeMap, path::Path};
     use tempfile::NamedTempFile;
 
-    const DESCRIPTORS: [&str; 2] = [
-        "tr([5940b9b9/86'/0'/0']tpubDDVNqmq75GNPWQ9UNKfP43UwjaHU4GYfoPavojQbfpyfZp2KetWgjGBRRAy4tYCrAA6SB11mhQAkqxjh1VtQHyKwT4oYxpwLaGHvoKmtxZf/0/*)#44aqnlam",
-        "tr([5940b9b9/86'/0'/0']tpubDDVNqmq75GNPWQ9UNKfP43UwjaHU4GYfoPavojQbfpyfZp2KetWgjGBRRAy4tYCrAA6SB11mhQAkqxjh1VtQHyKwT4oYxpwLaGHvoKmtxZf/1/*)#ypcpw2dr",
-    ];
+    use bdk_testenv::{block_id, hash, utils};
 
-    macro_rules! hash {
-        ($index:literal) => {{ bitcoin::hashes::Hash::hash($index.as_bytes()) }};
-    }
+    const DESCRIPTORS: [&str; 4] = [
+        "tr([5940b9b9/86'/0'/0']tpubDDVNqmq75GNPWQ9UNKfP43UwjaHU4GYfoPavojQbfpyfZp2KetWgjGBRRAy4tYCrAA6SB11mhQAkqxjh1VtQHyKwT4oYxpwLaGHvoKmtxZf/1/*)#ypcpw2dr",
+        "tr([5940b9b9/86'/0'/0']tpubDDVNqmq75GNPWQ9UNKfP43UwjaHU4GYfoPavojQbfpyfZp2KetWgjGBRRAy4tYCrAA6SB11mhQAkqxjh1VtQHyKwT4oYxpwLaGHvoKmtxZf/0/*)#44aqnlam",
+        "wpkh([41f2aed0/84h/1h/0h]tpubDDFSdQWw75hk1ewbwnNpPp5DvXFRKt68ioPoyJDY752cNHKkFxPWqkqCyCf4hxrEfpuxh46QisehL3m8Bi6MsAv394QVLopwbtfvryFQNUH/1/*)#emtwewtk",
+        "wpkh([41f2aed0/84h/1h/0h]tpubDDFSdQWw75hk1ewbwnNpPp5DvXFRKt68ioPoyJDY752cNHKkFxPWqkqCyCf4hxrEfpuxh46QisehL3m8Bi6MsAv394QVLopwbtfvryFQNUH/0/*)#g0w0ymmw",
+    ];
 
     fn create_db(path: impl AsRef<Path>) -> Database {
         Database::create(path).unwrap()
@@ -924,6 +923,7 @@ mod test {
         assert_eq!(network_changeset, Some(Network::Bitcoin));
     }
 
+    #[cfg(feature = "wallet")]
     #[test]
     fn test_keychains_persistence() {
         let tmpfile = NamedTempFile::new().unwrap();
@@ -931,9 +931,8 @@ mod test {
         let store = create_test_store(Arc::new(db), "wallet1");
         store.create_keychains_table().unwrap();
 
-        let descriptor: Descriptor<DescriptorPublicKey> = "tr([5940b9b9/86'/0'/0']tpubDDVNqmq75GNPWQ9UNKfP43UwjaHU4GYfoPavojQbfpyfZp2KetWgjGBRRAy4tYCrAA6SB11mhQAkqxjh1VtQHyKwT4oYxpwLaGHvoKmtxZf/0/*)#44aqnlam".parse().unwrap();
-        let change_descriptor: Descriptor<DescriptorPublicKey> = "tr([5940b9b9/86'/0'/0']tpubDDVNqmq75GNPWQ9UNKfP43UwjaHU4GYfoPavojQbfpyfZp2KetWgjGBRRAy4tYCrAA6SB11mhQAkqxjh1VtQHyKwT4oYxpwLaGHvoKmtxZf/1/*)#ypcpw2dr".parse().unwrap();
-
+        let descriptor: Descriptor<DescriptorPublicKey> = DESCRIPTORS[0].parse().unwrap();
+        let change_descriptor: Descriptor<DescriptorPublicKey> = DESCRIPTORS[1].parse().unwrap();
         let desc_changeset: BTreeMap<u64, Descriptor<DescriptorPublicKey>> =
             [(0, descriptor.clone()), (1, change_descriptor.clone())].into();
 
@@ -946,6 +945,7 @@ mod test {
         assert_eq!(*desc_changeset.get(&1).unwrap(), change_descriptor);
     }
 
+    #[cfg(feature = "wallet")]
     #[test]
     fn test_keychains_persistence_second() {
         let tmpfile = NamedTempFile::new().unwrap();
@@ -953,8 +953,8 @@ mod test {
         let store = create_test_store(Arc::new(db), "wallet1");
         store.create_keychains_table().unwrap();
 
-        let descriptor: Descriptor<DescriptorPublicKey> = "tr([5940b9b9/86'/0'/0']tpubDDVNqmq75GNPWQ9UNKfP43UwjaHU4GYfoPavojQbfpyfZp2KetWgjGBRRAy4tYCrAA6SB11mhQAkqxjh1VtQHyKwT4oYxpwLaGHvoKmtxZf/1/*)#ypcpw2dr".parse().unwrap();
-        let change_descriptor: Descriptor<DescriptorPublicKey> = "tr([5940b9b9/86'/0'/0']tpubDDVNqmq75GNPWQ9UNKfP43UwjaHU4GYfoPavojQbfpyfZp2KetWgjGBRRAy4tYCrAA6SB11mhQAkqxjh1VtQHyKwT4oYxpwLaGHvoKmtxZf/0/*)#44aqnlam".parse().unwrap();
+        let descriptor: Descriptor<DescriptorPublicKey> = DESCRIPTORS[1].parse().unwrap();
+        let change_descriptor: Descriptor<DescriptorPublicKey> = DESCRIPTORS[0].parse().unwrap();
 
         let desc_changeset: BTreeMap<u64, Descriptor<DescriptorPublicKey>> =
             [(0, descriptor.clone()), (1, change_descriptor.clone())].into();
@@ -968,6 +968,7 @@ mod test {
         assert_eq!(*desc_changeset.get(&1).unwrap(), change_descriptor);
     }
 
+    #[cfg(feature = "wallet")]
     #[test]
     fn test_single_desc_persistence() {
         let tmpfile = NamedTempFile::new().unwrap();
@@ -975,7 +976,7 @@ mod test {
         let store = create_test_store(Arc::new(db), "wallet1");
         store.create_keychains_table().unwrap();
 
-        let descriptor: Descriptor<DescriptorPublicKey> = "tr([5940b9b9/86'/0'/0']tpubDDVNqmq75GNPWQ9UNKfP43UwjaHU4GYfoPavojQbfpyfZp2KetWgjGBRRAy4tYCrAA6SB11mhQAkqxjh1VtQHyKwT4oYxpwLaGHvoKmtxZf/0/*)#44aqnlam".parse().unwrap();
+        let descriptor: Descriptor<DescriptorPublicKey> = DESCRIPTORS[0].parse().unwrap();
 
         store
             .persist_keychains(&[(0, descriptor.clone())].into())
@@ -995,12 +996,14 @@ mod test {
         let store = create_test_store(Arc::new(db), "wallet1");
 
         // create a local_chain_changeset, persist that and read it
-        let mut blocks: BTreeMap<u32, Option<BlockHash>> = BTreeMap::new();
-        blocks.insert(0u32, Some(hash!("B")));
-        blocks.insert(1u32, Some(hash!("D")));
-        blocks.insert(2u32, Some(hash!("K")));
-
-        let local_chain_changeset = local_chain::ChangeSet { blocks };
+        let local_chain_changeset = local_chain::ChangeSet {
+            blocks: [
+                (0, Some(hash!("B"))),
+                (1, Some(hash!("D"))),
+                (2, Some(hash!("K"))),
+            ]
+            .into(),
+        };
         store.create_local_chain_tables().unwrap();
         store.persist_local_chain(&local_chain_changeset).unwrap();
 
@@ -1009,19 +1012,18 @@ mod test {
         assert_eq!(local_chain_changeset, changeset);
 
         // create another local_chain_changeset, persist that and read it
-        let mut blocks: BTreeMap<u32, Option<BlockHash>> = BTreeMap::new();
-        blocks.insert(2u32, None);
-        let local_chain_changeset = local_chain::ChangeSet { blocks };
+        let local_chain_changeset = local_chain::ChangeSet {
+            blocks: [(2, None)].into(),
+        };
 
         store.persist_local_chain(&local_chain_changeset).unwrap();
 
         let mut changeset = local_chain::ChangeSet::default();
         store.read_local_chain(&mut changeset).unwrap();
 
-        let mut blocks: BTreeMap<u32, Option<BlockHash>> = BTreeMap::new();
-        blocks.insert(0u32, Some(hash!("B")));
-        blocks.insert(1u32, Some(hash!("D")));
-        let local_chain_changeset = local_chain::ChangeSet { blocks };
+        let local_chain_changeset = local_chain::ChangeSet {
+            blocks: [(0, Some(hash!("B"))), (1, Some(hash!("D")))].into(),
+        };
 
         assert_eq!(local_chain_changeset, changeset);
     }
@@ -1031,10 +1033,12 @@ mod test {
         let tmpfile = NamedTempFile::new().unwrap();
         let db = create_db(tmpfile.path());
         let store = create_test_store(Arc::new(db), "wallet1");
-        let mut blocks: BTreeMap<u32, Option<BlockHash>> = BTreeMap::new();
-        blocks.insert(0u32, Some(hash!("B")));
-        blocks.insert(1u32, Some(hash!("D")));
-        blocks.insert(2u32, Some(hash!("K")));
+        let blocks: BTreeMap<u32, Option<BlockHash>> = [
+            (0, Some(hash!("B"))),
+            (1, Some(hash!("D"))),
+            (2, Some(hash!("K"))),
+        ]
+        .into();
 
         let write_tx = store.db.begin_write().unwrap();
         let _ = write_tx.open_table(store.blocks_table_defn()).unwrap();
@@ -1045,8 +1049,7 @@ mod test {
         store.read_blocks(&read_tx, &mut blocks_new).unwrap();
         assert_eq!(blocks_new, blocks);
 
-        let mut blocks: BTreeMap<u32, Option<BlockHash>> = BTreeMap::new();
-        blocks.insert(2u32, None);
+        let blocks: BTreeMap<u32, Option<BlockHash>> = [(2, None)].into();
 
         let write_tx = store.db.begin_write().unwrap();
         store.persist_blocks(&write_tx, &blocks).unwrap();
@@ -1055,60 +1058,25 @@ mod test {
         let mut blocks_new: BTreeMap<u32, Option<BlockHash>> = BTreeMap::new();
         store.read_blocks(&read_tx, &mut blocks_new).unwrap();
 
-        let mut blocks: BTreeMap<u32, Option<BlockHash>> = BTreeMap::new();
-        blocks.insert(0u32, Some(hash!("B")));
-        blocks.insert(1u32, Some(hash!("D")));
+        let blocks: BTreeMap<u32, Option<BlockHash>> =
+            [(0, Some(hash!("B"))), (1, Some(hash!("D")))].into();
 
         assert_eq!(blocks, blocks_new);
     }
 
-    fn create_txns() -> (Transaction, Transaction, Transaction) {
-        let tx1 = Transaction {
+    fn create_one_inp_one_out_tx(txid: Txid, amount: u64) -> Transaction {
+        Transaction {
             version: transaction::Version::ONE,
             lock_time: absolute::LockTime::ZERO,
             input: vec![TxIn {
-                previous_output: OutPoint::null(),
-                ..Default::default()
+                previous_output: OutPoint::new(txid, 0),
+                ..TxIn::default()
             }],
             output: vec![TxOut {
-                value: Amount::from_sat(30_000),
+                value: Amount::from_sat(amount),
                 script_pubkey: ScriptBuf::new(),
             }],
-        };
-
-        let tx2 = Transaction {
-            version: transaction::Version::TWO,
-            lock_time: absolute::LockTime::ZERO,
-            input: vec![TxIn {
-                previous_output: OutPoint {
-                    txid: tx1.compute_txid(),
-                    vout: 0,
-                },
-                ..Default::default()
-            }],
-            output: vec![TxOut {
-                value: Amount::from_sat(20_000),
-                script_pubkey: ScriptBuf::new(),
-            }],
-        };
-
-        let tx3 = Transaction {
-            version: transaction::Version::TWO,
-            lock_time: absolute::LockTime::ZERO,
-            input: vec![TxIn {
-                previous_output: OutPoint {
-                    txid: tx2.compute_txid(),
-                    vout: 0,
-                },
-                ..Default::default()
-            }],
-            output: vec![TxOut {
-                value: Amount::from_sat(19_000),
-                script_pubkey: ScriptBuf::new(),
-            }],
-        };
-
-        (tx1, tx2, tx3)
+        }
     }
 
     #[test]
@@ -1117,10 +1085,15 @@ mod test {
         let db = create_db(tmpfile.path());
         let store = create_test_store(Arc::new(db), "wallet1");
 
-        let (tx1, tx2, tx3) = create_txns();
+        let tx1 = Arc::new(create_one_inp_one_out_tx(
+            Txid::from_byte_array([0; 32]),
+            30_000,
+        ));
+        let tx2 = Arc::new(create_one_inp_one_out_tx(tx1.compute_txid(), 20_000));
+        let tx3 = Arc::new(create_one_inp_one_out_tx(tx2.compute_txid(), 19_000));
 
         // try persisting and reading last_seen
-        let txs: BTreeSet<Arc<Transaction>> = [Arc::new(tx1.clone()), Arc::new(tx2.clone())].into();
+        let txs: BTreeSet<Arc<Transaction>> = [tx1.clone(), tx2.clone()].into();
         let mut last_seen: BTreeMap<Txid, u64> =
             [(tx1.compute_txid(), 100), (tx2.compute_txid(), 120)].into();
 
@@ -1142,7 +1115,7 @@ mod test {
         assert_eq!(last_seen_read, last_seen);
 
         // persist another last_seen and see if what is read is same as merged one
-        let txs_new: BTreeSet<Arc<Transaction>> = [Arc::new(tx3.clone())].into();
+        let txs_new: BTreeSet<Arc<Transaction>> = [tx3.clone()].into();
         let last_seen_new: BTreeMap<Txid, u64> = [(tx3.compute_txid(), 200)].into();
 
         let write_tx = store.db.begin_write().unwrap();
@@ -1172,9 +1145,14 @@ mod test {
         let db = create_db(tmpfile.path());
         let store = create_test_store(Arc::new(db), "wallet1");
 
-        let (tx1, tx2, tx3) = create_txns();
+        let tx1 = Arc::new(create_one_inp_one_out_tx(
+            Txid::from_byte_array([0; 32]),
+            30_000,
+        ));
+        let tx2 = Arc::new(create_one_inp_one_out_tx(tx1.compute_txid(), 20_000));
+        let tx3 = Arc::new(create_one_inp_one_out_tx(tx2.compute_txid(), 19_000));
 
-        let txs: BTreeSet<Arc<Transaction>> = [Arc::new(tx1.clone()), Arc::new(tx2.clone())].into();
+        let txs: BTreeSet<Arc<Transaction>> = [tx1.clone(), tx2.clone()].into();
         let mut last_evicted: BTreeMap<Txid, u64> =
             [(tx1.compute_txid(), 100), (tx2.compute_txid(), 120)].into();
 
@@ -1199,7 +1177,7 @@ mod test {
             .unwrap();
         assert_eq!(last_evicted_read, last_evicted);
 
-        let txs_new: BTreeSet<Arc<Transaction>> = [Arc::new(tx3.clone())].into();
+        let txs_new: BTreeSet<Arc<Transaction>> = [tx3.clone()].into();
         let last_evicted_new: BTreeMap<Txid, u64> = [(tx3.compute_txid(), 300)].into();
 
         let write_tx = store.db.begin_write().unwrap();
@@ -1231,9 +1209,14 @@ mod test {
         let db = create_db(tmpfile.path());
         let store = create_test_store(Arc::new(db), "wallet1");
 
-        let (tx1, tx2, tx3) = create_txns();
+        let tx1 = Arc::new(create_one_inp_one_out_tx(
+            Txid::from_byte_array([0; 32]),
+            30_000,
+        ));
+        let tx2 = Arc::new(create_one_inp_one_out_tx(tx1.compute_txid(), 20_000));
+        let tx3 = Arc::new(create_one_inp_one_out_tx(tx2.compute_txid(), 19_000));
 
-        let txs: BTreeSet<Arc<Transaction>> = [Arc::new(tx1.clone()), Arc::new(tx2.clone())].into();
+        let txs: BTreeSet<Arc<Transaction>> = [tx1.clone(), tx2.clone()].into();
         let mut first_seen: BTreeMap<Txid, u64> =
             [(tx1.compute_txid(), 100), (tx2.compute_txid(), 120)].into();
 
@@ -1256,7 +1239,7 @@ mod test {
             .unwrap();
         assert_eq!(first_seen_read, first_seen);
 
-        let txs_new: BTreeSet<Arc<Transaction>> = [Arc::new(tx3.clone())].into();
+        let txs_new: BTreeSet<Arc<Transaction>> = [tx3.clone()].into();
         let first_seen_new: BTreeMap<Txid, u64> = [(tx3.compute_txid(), 200)].into();
 
         let write_tx = store.db.begin_write().unwrap();
@@ -1288,20 +1271,14 @@ mod test {
 
         let mut txouts: BTreeMap<OutPoint, TxOut> = [
             (
-                OutPoint {
-                    txid: Txid::from_byte_array([0; 32]),
-                    vout: 0,
-                },
+                OutPoint::new(Txid::from_byte_array([0; 32]), 0),
                 TxOut {
                     value: Amount::from_sat(1300),
                     script_pubkey: ScriptBuf::from_bytes(vec![0]),
                 },
             ),
             (
-                OutPoint {
-                    txid: Txid::from_byte_array([1; 32]),
-                    vout: 0,
-                },
+                OutPoint::new(Txid::from_byte_array([1; 32]), 0),
                 TxOut {
                     value: Amount::from_sat(1400),
                     script_pubkey: ScriptBuf::from_bytes(vec![2]),
@@ -1321,10 +1298,7 @@ mod test {
         assert_eq!(txouts, txouts_read);
 
         let txouts_new: BTreeMap<OutPoint, TxOut> = [(
-            OutPoint {
-                txid: Txid::from_byte_array([2; 32]),
-                vout: 0,
-            },
+            OutPoint::new(Txid::from_byte_array([2; 32]), 0),
             TxOut {
                 value: Amount::from_sat(10000),
                 script_pubkey: ScriptBuf::from_bytes(vec![1]),
@@ -1350,9 +1324,14 @@ mod test {
         let db = create_db(tmpfile.path());
         let store = create_test_store(Arc::new(db), "wallet1");
 
-        let (tx1, tx2, tx3) = create_txns();
+        let tx1 = Arc::new(create_one_inp_one_out_tx(
+            Txid::from_byte_array([0; 32]),
+            30_000,
+        ));
+        let tx2 = Arc::new(create_one_inp_one_out_tx(tx1.compute_txid(), 20_000));
+        let tx3 = Arc::new(create_one_inp_one_out_tx(tx2.compute_txid(), 19_000));
 
-        let mut txs: BTreeSet<Arc<Transaction>> = [Arc::new(tx1), Arc::new(tx2.clone())].into();
+        let mut txs: BTreeSet<Arc<Transaction>> = [tx1, tx2.clone()].into();
 
         let write_tx = store.db.begin_write().unwrap();
         let _ = write_tx.open_table(store.txs_table_defn()).unwrap();
@@ -1364,7 +1343,7 @@ mod test {
         store.read_txs(&read_tx, &mut txs_read).unwrap();
         assert_eq!(txs_read, txs);
 
-        let txs_new: BTreeSet<Arc<Transaction>> = [Arc::new(tx3)].into();
+        let txs_new: BTreeSet<Arc<Transaction>> = [tx3].into();
         let write_tx = store.db.begin_write().unwrap();
         let _ = write_tx.open_table(store.txs_table_defn()).unwrap();
         store.persist_txs(&write_tx, &txs_new).unwrap();
@@ -1384,25 +1363,24 @@ mod test {
         let db = create_db(tmpfile.path());
         let store = create_test_store(Arc::new(db), "wallet1");
 
-        let (tx1, tx2, tx3) = create_txns();
+        let tx1 = Arc::new(create_one_inp_one_out_tx(
+            Txid::from_byte_array([0; 32]),
+            30_000,
+        ));
+        let tx2 = Arc::new(create_one_inp_one_out_tx(tx1.compute_txid(), 20_000));
+        let tx3 = Arc::new(create_one_inp_one_out_tx(tx2.compute_txid(), 19_000));
 
         let anchor1 = ConfirmationBlockTime {
-            block_id: BlockId {
-                height: 23,
-                hash: BlockHash::from_byte_array([0; 32]),
-            },
+            block_id: block_id!(23, "BTC"),
             confirmation_time: 1756838400,
         };
 
         let anchor2 = ConfirmationBlockTime {
-            block_id: BlockId {
-                height: 25,
-                hash: BlockHash::from_byte_array([0; 32]),
-            },
+            block_id: block_id!(25, "BDK"),
             confirmation_time: 1756839600,
         };
 
-        let txs: BTreeSet<Arc<Transaction>> = [Arc::new(tx1.clone()), Arc::new(tx2.clone())].into();
+        let txs: BTreeSet<Arc<Transaction>> = [tx1.clone(), tx2.clone()].into();
         let mut anchors = [(anchor1, tx1.compute_txid()), (anchor2, tx2.compute_txid())].into();
 
         let write_tx = store.db.begin_write().unwrap();
@@ -1425,7 +1403,7 @@ mod test {
         store.read_anchors(&read_tx, &mut anchors_read).unwrap();
         assert_eq!(anchors_read, anchors);
 
-        let txs_new: BTreeSet<Arc<Transaction>> = [Arc::new(tx3.clone())].into();
+        let txs_new: BTreeSet<Arc<Transaction>> = [tx3.clone()].into();
         let anchors_new: BTreeSet<(ConfirmationBlockTime, Txid)> =
             [(anchor2, tx3.compute_txid())].into();
 
@@ -1451,19 +1429,18 @@ mod test {
         let db = create_db(tmpfile.path());
         let store = create_test_store(Arc::new(db), "wallet1");
 
-        let (tx1, tx2, tx3) = create_txns();
+        let tx1 = Arc::new(create_one_inp_one_out_tx(
+            Txid::from_byte_array([0; 32]),
+            30_000,
+        ));
+        let tx2 = Arc::new(create_one_inp_one_out_tx(tx1.compute_txid(), 20_000));
+        let tx3 = Arc::new(create_one_inp_one_out_tx(tx2.compute_txid(), 19_000));
 
-        let anchor1 = BlockId {
-            height: 23,
-            hash: BlockHash::from_byte_array([0; 32]),
-        };
+        let anchor1 = block_id!(23, "BTC");
 
-        let anchor2 = BlockId {
-            height: 25,
-            hash: BlockHash::from_byte_array([0; 32]),
-        };
+        let anchor2 = block_id!(25, "BDK");
 
-        let txs: BTreeSet<Arc<Transaction>> = [Arc::new(tx1.clone()), Arc::new(tx2.clone())].into();
+        let txs: BTreeSet<Arc<Transaction>> = [tx1.clone(), tx2.clone()].into();
         let mut anchors = [(anchor1, tx1.compute_txid()), (anchor2, tx2.compute_txid())].into();
 
         let write_tx = store.db.begin_write().unwrap();
@@ -1486,7 +1463,7 @@ mod test {
         store.read_anchors(&read_tx, &mut anchors_read).unwrap();
         assert_eq!(anchors_read, anchors);
 
-        let txs_new: BTreeSet<Arc<Transaction>> = [Arc::new(tx3.clone())].into();
+        let txs_new: BTreeSet<Arc<Transaction>> = [tx3.clone()].into();
         let anchors_new: BTreeSet<(BlockId, Txid)> = [(anchor2, tx3.compute_txid())].into();
 
         let write_tx = store.db.begin_write().unwrap();
@@ -1510,11 +1487,12 @@ mod test {
         let tmpfile = NamedTempFile::new().unwrap();
         let db = create_db(tmpfile.path());
         let store = create_test_store(Arc::new(db), "wallet1");
-        let (tx1, tx2, _) = create_txns();
-        let block_id = BlockId {
-            height: 100,
-            hash: hash!("BDK"),
-        };
+        let tx1 = Arc::new(create_one_inp_one_out_tx(
+            Txid::from_byte_array([0; 32]),
+            30_000,
+        ));
+        let tx2 = Arc::new(create_one_inp_one_out_tx(tx1.compute_txid(), 20_000));
+        let block_id = block_id!(100, "B");
 
         let conf_anchor: ConfirmationBlockTime = ConfirmationBlockTime {
             block_id,
@@ -1522,12 +1500,12 @@ mod test {
         };
 
         let mut tx_graph_changeset1 = tx_graph::ChangeSet::<ConfirmationBlockTime> {
-            txs: [Arc::new(tx1.clone())].into(),
+            txs: [tx1.clone()].into(),
             txouts: [].into(),
-            anchors: [(conf_anchor, tx1.clone().compute_txid())].into(),
-            last_seen: [(tx1.clone().compute_txid(), 100)].into(),
-            first_seen: [(tx1.clone().compute_txid(), 50)].into(),
-            last_evicted: [(tx1.clone().compute_txid(), 150)].into(),
+            anchors: [(conf_anchor, tx1.compute_txid())].into(),
+            last_seen: [(tx1.compute_txid(), 100)].into(),
+            first_seen: [(tx1.compute_txid(), 50)].into(),
+            last_evicted: [(tx1.compute_txid(), 150)].into(),
         };
 
         store
@@ -1540,10 +1518,7 @@ mod test {
         store.read_tx_graph(&mut changeset).unwrap();
         assert_eq!(changeset, tx_graph_changeset1);
 
-        let block_id = BlockId {
-            height: 101,
-            hash: hash!("REDB"),
-        };
+        let block_id = block_id!(101, "REDB");
 
         let conf_anchor: ConfirmationBlockTime = ConfirmationBlockTime {
             block_id,
@@ -1551,12 +1526,12 @@ mod test {
         };
 
         let tx_graph_changeset2 = tx_graph::ChangeSet::<ConfirmationBlockTime> {
-            txs: [Arc::new(tx2.clone())].into(),
+            txs: [tx2.clone()].into(),
             txouts: [].into(),
             anchors: [(conf_anchor, tx2.compute_txid())].into(),
-            last_seen: [(tx2.clone().compute_txid(), 200)].into(),
-            first_seen: [(tx2.clone().compute_txid(), 100)].into(),
-            last_evicted: [(tx2.clone().compute_txid(), 150)].into(),
+            last_seen: [(tx2.compute_txid(), 200)].into(),
+            first_seen: [(tx2.compute_txid(), 100)].into(),
+            last_evicted: [(tx2.compute_txid(), 150)].into(),
         };
 
         store.persist_tx_graph(&tx_graph_changeset2).unwrap();
@@ -1569,19 +1544,21 @@ mod test {
         assert_eq!(tx_graph_changeset1, changeset);
     }
 
+    fn parse_descriptor(descriptor: &str) -> Descriptor<DescriptorPublicKey> {
+        let secp = bdk_chain::bitcoin::secp256k1::Secp256k1::signing_only();
+        Descriptor::<DescriptorPublicKey>::parse_descriptor(&secp, descriptor)
+            .unwrap()
+            .0
+    }
+
     #[test]
     fn test_last_revealed_persistence() {
         let tmpfile = NamedTempFile::new().unwrap();
         let db = create_db(tmpfile.path());
         let store = create_test_store(Arc::new(db), "wallet1");
-        let secp = bitcoin::secp256k1::Secp256k1::signing_only();
 
-        let descriptor_ids = DESCRIPTORS.map(|d| {
-            Descriptor::<DescriptorPublicKey>::parse_descriptor(&secp, d)
-                .unwrap()
-                .0
-                .descriptor_id()
-        });
+        let descriptor_ids = utils::DESCRIPTORS.map(|d| parse_descriptor(d).descriptor_id());
+
 
         let mut last_revealed: BTreeMap<DescriptorId, u32> =
             [(descriptor_ids[0], 1), (descriptor_ids[1], 100)].into();
@@ -1627,14 +1604,8 @@ mod test {
         let tmpfile = NamedTempFile::new().unwrap();
         let db = create_db(tmpfile.path());
         let store = create_test_store(Arc::new(db), "wallet1");
-        let secp = bitcoin::secp256k1::Secp256k1::signing_only();
 
-        let descriptor_ids = DESCRIPTORS.map(|d| {
-            Descriptor::<DescriptorPublicKey>::parse_descriptor(&secp, d)
-                .unwrap()
-                .0
-                .descriptor_id()
-        });
+        let descriptor_ids = utils::DESCRIPTORS.map(|d| parse_descriptor(d).descriptor_id());
 
         let spk_cache: BTreeMap<DescriptorId, BTreeMap<u32, ScriptBuf>> = [
             (
@@ -1707,14 +1678,8 @@ mod test {
         let tmpfile = NamedTempFile::new().unwrap();
         let db = create_db(tmpfile.path());
         let store = create_test_store(Arc::new(db), "wallet1");
-        let secp = bitcoin::secp256k1::Secp256k1::signing_only();
 
-        let descriptor_ids = DESCRIPTORS.map(|d| {
-            Descriptor::<DescriptorPublicKey>::parse_descriptor(&secp, d)
-                .unwrap()
-                .0
-                .descriptor_id()
-        });
+        let descriptor_ids = utils::DESCRIPTORS.map(|d| parse_descriptor(d).descriptor_id());
 
         let mut keychain_txout_changeset = keychain_txout::ChangeSet {
             last_revealed: [(descriptor_ids[0], 1), (descriptor_ids[1], 100)].into(),
@@ -1765,11 +1730,11 @@ mod test {
     #[test]
     fn test_persist_wallet() {
         let tmpfile = NamedTempFile::new().unwrap();
-        let db = create_db(tmpfile.path());
-        let store = create_test_store(Arc::new(db), "wallet1");
+        let db = Arc::new(create_db(tmpfile.path()));
+        let store = create_test_store(db, "wallet1");
 
-        let descriptor: Descriptor<DescriptorPublicKey> = DESCRIPTORS[1].parse().unwrap();
-        let change_descriptor: Descriptor<DescriptorPublicKey> = DESCRIPTORS[0].parse().unwrap();
+        let descriptor: Descriptor<DescriptorPublicKey> = DESCRIPTORS[0].parse().unwrap();
+        let change_descriptor: Descriptor<DescriptorPublicKey> = DESCRIPTORS[1].parse().unwrap();
 
         let mut blocks: BTreeMap<u32, Option<BlockHash>> = BTreeMap::new();
         blocks.insert(0u32, Some(hash!("B")));
@@ -1777,12 +1742,13 @@ mod test {
         blocks.insert(2u32, Some(hash!("C")));
         let local_chain_changeset = local_chain::ChangeSet { blocks };
 
-        let (tx1, tx2, _) = create_txns();
+        let tx1 = Arc::new(create_one_inp_one_out_tx(
+            Txid::from_byte_array([0; 32]),
+            30_000,
+        ));
+        let tx2 = Arc::new(create_one_inp_one_out_tx(tx1.compute_txid(), 20_000));
 
-        let block_id = BlockId {
-            height: 1,
-            hash: hash!("BDK"),
-        };
+        let block_id = block_id!(1, "BDK");
 
         let conf_anchor: ConfirmationBlockTime = ConfirmationBlockTime {
             block_id,
@@ -1790,12 +1756,12 @@ mod test {
         };
 
         let tx_graph_changeset = tx_graph::ChangeSet::<ConfirmationBlockTime> {
-            txs: [Arc::new(tx1.clone())].into(),
+            txs: [tx1.clone()].into(),
             txouts: [].into(),
             anchors: [(conf_anchor, tx1.compute_txid())].into(),
-            last_seen: [(tx1.clone().compute_txid(), 100)].into(),
-            first_seen: [(tx1.clone().compute_txid(), 80)].into(),
-            last_evicted: [(tx1.clone().compute_txid(), 150)].into(),
+            last_seen: [(tx1.compute_txid(), 100)].into(),
+            first_seen: [(tx1.compute_txid(), 80)].into(),
+            last_evicted: [(tx1.compute_txid(), 150)].into(),
         };
 
         let keychain_txout_changeset = keychain_txout::ChangeSet {
@@ -1843,10 +1809,7 @@ mod test {
         blocks.insert(5u32, Some(hash!("DB")));
         let local_chain_changeset = local_chain::ChangeSet { blocks };
 
-        let block_id = BlockId {
-            height: 2,
-            hash: hash!("Bitcoin"),
-        };
+        let block_id = block_id!(2, "Bitcoin");
 
         let conf_anchor: ConfirmationBlockTime = ConfirmationBlockTime {
             block_id,
@@ -1854,12 +1817,12 @@ mod test {
         };
 
         let tx_graph_changeset = tx_graph::ChangeSet::<ConfirmationBlockTime> {
-            txs: [Arc::new(tx2.clone())].into(),
+            txs: [tx2.clone()].into(),
             txouts: [].into(),
             anchors: [(conf_anchor, tx2.compute_txid())].into(),
-            last_seen: [(tx2.clone().compute_txid(), 200)].into(),
-            first_seen: [(tx2.clone().compute_txid(), 160)].into(),
-            last_evicted: [(tx2.clone().compute_txid(), 300)].into(),
+            last_seen: [(tx2.compute_txid(), 200)].into(),
+            first_seen: [(tx2.compute_txid(), 160)].into(),
+            last_evicted: [(tx2.compute_txid(), 300)].into(),
         };
 
         let keychain_txout_changeset = keychain_txout::ChangeSet {
@@ -1891,5 +1854,50 @@ mod test {
         changeset.merge(changeset_new);
 
         assert_eq!(changeset, changeset_read_new);
+    }
+
+    #[cfg(feature = "wallet")]
+    #[test]
+    fn test_persist_multi_wallet() {
+        let tmpfile = NamedTempFile::new().unwrap();
+        let db = Arc::new(create_db(tmpfile.path()));
+
+        let store1 = create_test_store(db.clone(), "wallet1");
+
+        let descriptor: Descriptor<DescriptorPublicKey> = DESCRIPTORS[0].parse().unwrap();
+        let change_descriptor: Descriptor<DescriptorPublicKey> = DESCRIPTORS[1].parse().unwrap();
+
+        let changeset1 = ChangeSet {
+            descriptor: Some(descriptor.clone()),
+            change_descriptor: Some(change_descriptor.clone()),
+            network: Some(Network::Bitcoin),
+            ..ChangeSet::default()
+        };
+
+        store1.create_tables::<ConfirmationBlockTime>().unwrap();
+        store1.persist_wallet(&changeset1).unwrap();
+
+        let store2 = create_test_store(db, "wallet2");
+
+        let descriptor: Descriptor<DescriptorPublicKey> = DESCRIPTORS[2].parse().unwrap();
+        let change_descriptor: Descriptor<DescriptorPublicKey> = DESCRIPTORS[3].parse().unwrap();
+
+        let changeset2 = ChangeSet {
+            descriptor: Some(descriptor.clone()),
+            change_descriptor: Some(change_descriptor.clone()),
+            network: Some(Network::Bitcoin),
+            ..ChangeSet::default()
+        };
+
+        store2.create_tables::<ConfirmationBlockTime>().unwrap();
+        store2.persist_wallet(&changeset2).unwrap();
+
+        let mut changeset_read = ChangeSet::default();
+        store1.read_wallet(&mut changeset_read).unwrap();
+        assert_eq!(changeset_read, changeset1);
+
+        let mut changeset_read = ChangeSet::default();
+        store2.read_wallet(&mut changeset_read).unwrap();
+        assert_eq!(changeset_read, changeset2);
     }
 }
