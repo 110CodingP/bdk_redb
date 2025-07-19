@@ -2,6 +2,10 @@
 name = "bdk_redb"
 version = "0.1.0"
 edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "Persistence backend for bdk using redb"
+repository = "https://github.com/110CodingP/bdk_redb"
+readme = "README.md"
 
 [dependencies]
 bdk_wallet = {version = "2.0.0", optional = true}
