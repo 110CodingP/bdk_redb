@@ -1120,9 +1120,7 @@ mod test {
         write_tx.commit().unwrap();
 
         let write_tx = store.db.begin_write().unwrap();
-        store
-            .persist_txs(&write_tx, &txs)
-            .unwrap();
+        store.persist_txs(&write_tx, &txs).unwrap();
         write_tx.commit().unwrap();
 
         // to hit the branch for the case when tx is persisted but not in changeset
@@ -1216,9 +1214,7 @@ mod test {
         write_tx.commit().unwrap();
 
         let write_tx = store.db.begin_write().unwrap();
-        store
-            .persist_txs(&write_tx, &txs)
-            .unwrap();
+        store.persist_txs(&write_tx, &txs).unwrap();
         write_tx.commit().unwrap();
 
         // to hit the branch for the case when tx is persisted but not in changeset
@@ -1315,9 +1311,7 @@ mod test {
         write_tx.commit().unwrap();
 
         let write_tx = store.db.begin_write().unwrap();
-        store
-            .persist_txs(&write_tx, &txs)
-            .unwrap();
+        store.persist_txs(&write_tx, &txs).unwrap();
         write_tx.commit().unwrap();
 
         // to hit the branch for the case when tx is persisted but not in changeset
@@ -1515,9 +1509,7 @@ mod test {
         write_tx.commit().unwrap();
 
         let write_tx = store.db.begin_write().unwrap();
-        store
-            .persist_txs(&write_tx, &txs)
-            .unwrap();
+        store.persist_txs(&write_tx, &txs).unwrap();
         write_tx.commit().unwrap();
 
         // to hit the branch for the case when tx is persisted but not in changeset
@@ -1555,7 +1547,8 @@ mod test {
         anchors.merge(anchors_new);
         assert_eq!(anchors_read_new, anchors);
 
-        // to hit the branch for the case when tx is persisted and is also in changeset (can this happen though?)
+        // to hit the branch for the case when tx is persisted and is also in changeset (can this
+        // happen though?)
         let tx4 = Arc::new(create_one_inp_one_out_tx(tx3.compute_txid(), 14_000));
 
         let txs_new: BTreeSet<Arc<Transaction>> = [tx4.clone()].into();
@@ -1563,9 +1556,7 @@ mod test {
             [(anchor2, tx4.compute_txid())].into();
 
         let write_tx = store.db.begin_write().unwrap();
-        store
-            .persist_txs(&write_tx, &txs_new)
-            .unwrap();
+        store.persist_txs(&write_tx, &txs_new).unwrap();
         write_tx.commit().unwrap();
 
         let write_tx = store.db.begin_write().unwrap();
@@ -1604,18 +1595,16 @@ mod test {
             .unwrap();
         write_tx.commit().unwrap();
 
-
-        let anchors_missing_txs: BTreeSet<(ConfirmationBlockTime, Txid)>  = [(anchor1, hash!("B"))].into();
+        let anchors_missing_txs: BTreeSet<(ConfirmationBlockTime, Txid)> =
+            [(anchor1, hash!("B"))].into();
         let txs: BTreeSet<Arc<Transaction>> = BTreeSet::new();
 
         let write_tx = store.db.begin_write().unwrap();
         let read_tx = store.db.begin_read().unwrap();
-        let _ = store
-            .persist_anchors(&write_tx, &read_tx, &anchors_missing_txs, &txs);
+        let _ = store.persist_anchors(&write_tx, &read_tx, &anchors_missing_txs, &txs);
         read_tx.close().unwrap();
         write_tx.commit().unwrap();
     }
-
 
     #[test]
     fn test_persist_anchors_blockid() {
