@@ -74,6 +74,7 @@
 //! Also note that [`BDK`] uses structures called ChangeSets for persistence so while the
 //! documentation of each function links to the structures it is trying to eventually persist, the
 //! function actually uses the corresponding ChangeSets.
+#![cfg_attr(coverage_nightly, feature(coverage_attribute))]
 pub use redb;
 
 pub mod anchor_trait;
@@ -873,6 +874,7 @@ impl WalletPersister for Store {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod test {
     use super::*;
     use bdk_chain::BlockId;

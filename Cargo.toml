@@ -22,3 +22,6 @@ wallet = ["bdk_wallet"]
 [dev-dependencies]
 anyhow = "1.0.98"
 bdk_testenv = { version = "0.13.0" }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage,coverage_nightly)'] }
