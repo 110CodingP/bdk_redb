@@ -1,3 +1,4 @@
+#![warn(missing_docs)]
 //! This module contains the crate's error type.
 use std::io::Error as IoError;
 

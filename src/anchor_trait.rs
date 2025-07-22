@@ -1,3 +1,4 @@
+#![warn(missing_docs)]
 //! This module contains [`AnchorWithMetaData`] trait and implementations of the trait for some
 //! types.
 use bdk_chain::{Anchor, BlockId, ConfirmationBlockTime};

@@ -1,3 +1,4 @@
+#![warn(missing_docs)]
 //! This crate provides an alternative to the sqlite persistence backend for [`BDK`] using [`redb`],
 //! a lightweight key-value store in Rust.
 //!
