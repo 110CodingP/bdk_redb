@@ -896,6 +896,7 @@ mod test {
 
     use bdk_testenv::{block_id, hash, utils};
 
+    #[cfg(feature = "wallet")]
     const DESCRIPTORS: [&str; 4] = [
         "tr([5940b9b9/86'/0'/0']tpubDDVNqmq75GNPWQ9UNKfP43UwjaHU4GYfoPavojQbfpyfZp2KetWgjGBRRAy4tYCrAA6SB11mhQAkqxjh1VtQHyKwT4oYxpwLaGHvoKmtxZf/1/*)#ypcpw2dr",
         "tr([5940b9b9/86'/0'/0']tpubDDVNqmq75GNPWQ9UNKfP43UwjaHU4GYfoPavojQbfpyfZp2KetWgjGBRRAy4tYCrAA6SB11mhQAkqxjh1VtQHyKwT4oYxpwLaGHvoKmtxZf/0/*)#44aqnlam",
@@ -2083,6 +2084,7 @@ mod test {
         assert_eq!(changeset_read, changeset2);
     }
 
+    #[cfg(feature = "wallet")]
     #[test]
     fn wallets_missing_descriptors() {
         // to increase branch coverage for if-let statements
