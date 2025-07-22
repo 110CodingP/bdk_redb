@@ -992,6 +992,20 @@ mod test {
         assert_eq!(desc_changeset.get(&1), None);
     }
 
+    #[cfg(feature = "wallet")]
+    #[test]
+    fn test_descriptor_missing() {
+        let tmpfile = NamedTempFile::new().unwrap();
+        let db = create_db(tmpfile.path());
+        let store = create_test_store(Arc::new(db), "wallet1");
+        store.create_keychains_table().unwrap();
+
+        let mut desc_changeset: BTreeMap<u64, Descriptor<DescriptorPublicKey>> = BTreeMap::new();
+        store.read_keychains(&mut desc_changeset).unwrap();
+        assert_eq!(desc_changeset.get(&0), None);
+        assert_eq!(desc_changeset.get(&1), None);
+    }
+
     #[test]
     fn test_local_chain_persistence() {
         let tmpfile = NamedTempFile::new().unwrap();
@@ -1106,6 +1120,15 @@ mod test {
         write_tx.commit().unwrap();
 
         let write_tx = store.db.begin_write().unwrap();
+        store
+            .persist_txs(&write_tx, &txs)
+            .unwrap();
+        write_tx.commit().unwrap();
+
+        // to hit the branch for the case when tx is persisted but not in changeset
+        let txs: BTreeSet<Arc<Transaction>> = BTreeSet::new();
+
+        let write_tx = store.db.begin_write().unwrap();
         let read_tx = store.db.begin_read().unwrap();
         store
             .persist_last_seen(&write_tx, &read_tx, &last_seen, &txs)
@@ -1143,6 +1166,32 @@ mod test {
     }
 
     #[test]
+    #[should_panic]
+    fn test_last_seen_missing_txn() {
+        // to hit the branch for the panic case in persist_last_seen
+        let tmpfile = NamedTempFile::new().unwrap();
+        let db = create_db(tmpfile.path());
+        let store = create_test_store(Arc::new(db), "wallet1");
+
+        let last_seen: BTreeMap<Txid, u64> =
+            [(hash!("B"), 100), (hash!("T"), 120), (hash!("C"), 121)].into();
+
+        let write_tx = store.db.begin_write().unwrap();
+        let _ = write_tx.open_table(store.txs_table_defn()).unwrap();
+        let _ = write_tx.open_table(store.last_seen_defn()).unwrap();
+        write_tx.commit().unwrap();
+
+        let txs: BTreeSet<Arc<Transaction>> = BTreeSet::new();
+
+        let write_tx = store.db.begin_write().unwrap();
+        let read_tx = store.db.begin_read().unwrap();
+        store
+            .persist_last_seen(&write_tx, &read_tx, &last_seen, &txs)
+            .unwrap();
+        write_tx.commit().unwrap();
+    }
+
+    #[test]
     fn test_persist_last_evicted() {
         let tmpfile = NamedTempFile::new().unwrap();
         let db = create_db(tmpfile.path());
@@ -1165,6 +1214,15 @@ mod test {
             .open_table(store.last_evicted_table_defn())
             .unwrap();
         write_tx.commit().unwrap();
+
+        let write_tx = store.db.begin_write().unwrap();
+        store
+            .persist_txs(&write_tx, &txs)
+            .unwrap();
+        write_tx.commit().unwrap();
+
+        // to hit the branch for the case when tx is persisted but not in changeset
+        let txs: BTreeSet<Arc<Transaction>> = BTreeSet::new();
 
         let write_tx = store.db.begin_write().unwrap();
         let read_tx = store.db.begin_read().unwrap();
@@ -1207,6 +1265,34 @@ mod test {
     }
 
     #[test]
+    #[should_panic]
+    fn test_last_evicted_missing_txs() {
+        // to hit the branch for the panic case in persist_last_evicted
+        let tmpfile = NamedTempFile::new().unwrap();
+        let db = create_db(tmpfile.path());
+        let store = create_test_store(Arc::new(db), "wallet1");
+
+        let last_evicted: BTreeMap<Txid, u64> =
+            [(hash!("B"), 100), (hash!("D"), 120), (hash!("K"), 132)].into();
+
+        let write_tx = store.db.begin_write().unwrap();
+        let _ = write_tx.open_table(store.txs_table_defn()).unwrap();
+        let _ = write_tx
+            .open_table(store.last_evicted_table_defn())
+            .unwrap();
+        write_tx.commit().unwrap();
+
+        let txs: BTreeSet<Arc<Transaction>> = BTreeSet::new();
+
+        let write_tx = store.db.begin_write().unwrap();
+        let read_tx = store.db.begin_read().unwrap();
+        store
+            .persist_last_evicted(&write_tx, &read_tx, &last_evicted, &txs)
+            .unwrap();
+        write_tx.commit().unwrap();
+    }
+
+    #[test]
     fn test_persist_first_seen() {
         let tmpfile = NamedTempFile::new().unwrap();
         let db = create_db(tmpfile.path());
@@ -1227,6 +1313,15 @@ mod test {
         let _ = write_tx.open_table(store.txs_table_defn()).unwrap();
         let _ = write_tx.open_table(store.first_seen_table_defn()).unwrap();
         write_tx.commit().unwrap();
+
+        let write_tx = store.db.begin_write().unwrap();
+        store
+            .persist_txs(&write_tx, &txs)
+            .unwrap();
+        write_tx.commit().unwrap();
+
+        // to hit the branch for the case when tx is persisted but not in changeset
+        let txs: BTreeSet<Arc<Transaction>> = BTreeSet::new();
 
         let write_tx = store.db.begin_write().unwrap();
         let read_tx = store.db.begin_read().unwrap();
@@ -1264,6 +1359,32 @@ mod test {
             .unwrap();
         first_seen.merge(first_seen_new);
         assert_eq!(first_seen_read_new, first_seen);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_first_seen_missing_tx() {
+        // to hit the branch for the panic case persist_first_seen
+        let tmpfile = NamedTempFile::new().unwrap();
+        let db = create_db(tmpfile.path());
+        let store = create_test_store(Arc::new(db), "wallet1");
+
+        let first_seen: BTreeMap<Txid, u64> =
+            [(hash!("B"), 100), (hash!("T"), 120), (hash!("C"), 121)].into();
+
+        let write_tx = store.db.begin_write().unwrap();
+        let _ = write_tx.open_table(store.txs_table_defn()).unwrap();
+        let _ = write_tx.open_table(store.first_seen_table_defn()).unwrap();
+        write_tx.commit().unwrap();
+
+        let txs: BTreeSet<Arc<Transaction>> = BTreeSet::new();
+
+        let write_tx = store.db.begin_write().unwrap();
+        let read_tx = store.db.begin_read().unwrap();
+        store
+            .persist_first_seen(&write_tx, &read_tx, &first_seen, &txs)
+            .unwrap();
+        write_tx.commit().unwrap();
     }
 
     #[test]
@@ -1394,6 +1515,15 @@ mod test {
         write_tx.commit().unwrap();
 
         let write_tx = store.db.begin_write().unwrap();
+        store
+            .persist_txs(&write_tx, &txs)
+            .unwrap();
+        write_tx.commit().unwrap();
+
+        // to hit the branch for the case when tx is persisted but not in changeset
+        let txs: BTreeSet<Arc<Transaction>> = BTreeSet::new();
+
+        let write_tx = store.db.begin_write().unwrap();
         let read_tx = store.db.begin_read().unwrap();
         store
             .persist_anchors(&write_tx, &read_tx, &anchors, &txs)
@@ -1424,7 +1554,68 @@ mod test {
 
         anchors.merge(anchors_new);
         assert_eq!(anchors_read_new, anchors);
+
+        // to hit the branch for the case when tx is persisted and is also in changeset (can this happen though?)
+        let tx4 = Arc::new(create_one_inp_one_out_tx(tx3.compute_txid(), 14_000));
+
+        let txs_new: BTreeSet<Arc<Transaction>> = [tx4.clone()].into();
+        let anchors_new: BTreeSet<(ConfirmationBlockTime, Txid)> =
+            [(anchor2, tx4.compute_txid())].into();
+
+        let write_tx = store.db.begin_write().unwrap();
+        store
+            .persist_txs(&write_tx, &txs_new)
+            .unwrap();
+        write_tx.commit().unwrap();
+
+        let write_tx = store.db.begin_write().unwrap();
+        let read_tx = store.db.begin_read().unwrap();
+        store
+            .persist_anchors(&write_tx, &read_tx, &anchors_new, &txs_new)
+            .unwrap();
+        read_tx.close().unwrap();
+        write_tx.commit().unwrap();
+
+        let read_tx = store.db.begin_read().unwrap();
+        let mut anchors_read_new: BTreeSet<(ConfirmationBlockTime, Txid)> = BTreeSet::new();
+        store.read_anchors(&read_tx, &mut anchors_read_new).unwrap();
+
+        anchors.merge(anchors_new);
+        assert_eq!(anchors_read_new, anchors);
     }
+
+    #[test]
+    #[should_panic]
+    fn test_anchors_missing_tx() {
+        // to hit the branch for the panic case in persist_anchors
+        let tmpfile = NamedTempFile::new().unwrap();
+        let db = create_db(tmpfile.path());
+        let store = create_test_store(Arc::new(db), "wallet1");
+
+        let anchor1 = ConfirmationBlockTime {
+            block_id: block_id!(23, "BTC"),
+            confirmation_time: 1756838400,
+        };
+
+        let write_tx = store.db.begin_write().unwrap();
+        let _ = write_tx.open_table(store.txs_table_defn()).unwrap();
+        let _ = write_tx
+            .open_table(store.anchors_table_defn::<ConfirmationBlockTime>())
+            .unwrap();
+        write_tx.commit().unwrap();
+
+
+        let anchors_missing_txs: BTreeSet<(ConfirmationBlockTime, Txid)>  = [(anchor1, hash!("B"))].into();
+        let txs: BTreeSet<Arc<Transaction>> = BTreeSet::new();
+
+        let write_tx = store.db.begin_write().unwrap();
+        let read_tx = store.db.begin_read().unwrap();
+        let _ = store
+            .persist_anchors(&write_tx, &read_tx, &anchors_missing_txs, &txs);
+        read_tx.close().unwrap();
+        write_tx.commit().unwrap();
+    }
+
 
     #[test]
     fn test_persist_anchors_blockid() {
@@ -1888,6 +2079,44 @@ mod test {
             descriptor: Some(descriptor.clone()),
             change_descriptor: Some(change_descriptor.clone()),
             network: Some(Network::Bitcoin),
+            ..ChangeSet::default()
+        };
+
+        store2.create_tables::<ConfirmationBlockTime>().unwrap();
+        store2.persist_wallet(&changeset2).unwrap();
+
+        let mut changeset_read = ChangeSet::default();
+        store1.read_wallet(&mut changeset_read).unwrap();
+        assert_eq!(changeset_read, changeset1);
+
+        let mut changeset_read = ChangeSet::default();
+        store2.read_wallet(&mut changeset_read).unwrap();
+        assert_eq!(changeset_read, changeset2);
+    }
+
+    #[test]
+    fn wallets_missing_descriptors() {
+        // to increase branch coverage for if-let statements
+        // in persist_wallet functions
+        let tmpfile = NamedTempFile::new().unwrap();
+        let db = Arc::new(create_db(tmpfile.path()));
+
+        let store1 = create_test_store(db.clone(), "wallet1");
+
+        let changeset1 = ChangeSet {
+            network: Some(Network::Bitcoin),
+            ..ChangeSet::default()
+        };
+
+        store1.create_tables::<ConfirmationBlockTime>().unwrap();
+        store1.persist_wallet(&changeset1).unwrap();
+
+        let store2 = create_test_store(db, "wallet2");
+
+        let descriptor: Descriptor<DescriptorPublicKey> = DESCRIPTORS[2].parse().unwrap();
+
+        let changeset2 = ChangeSet {
+            descriptor: Some(descriptor.clone()),
             ..ChangeSet::default()
         };
 
