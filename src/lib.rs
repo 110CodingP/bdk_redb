@@ -5,9 +5,6 @@
 //! [`BDK`]: <https://github.com/bitcoindevkit>
 //! [`redb`]: <https://github.com/cberner/redb>
 //!
-//! <div class="warning">Warning: Descriptors in the following example are on a test network and
-//! only serve as an example. MAINNET funds sent to addresses controlled by these will be lost!
-//! </div>
 //!
 //! # Example
 //!
@@ -16,7 +13,7 @@
 //! ```toml
 //! [dependencies]
 //! anyhow = "1.0.98"
-//! bdk_redb = { git = "https://github.com/110CodingP/bdk_redb" }
+//! bdk_redb = { version = "0.1.0" }
 //! bdk_wallet = "2.0.0"
 //! tempfile = "3.20.0"
 //! ```
@@ -33,6 +30,8 @@
 //!     
 //!     use anyhow::Result;
 //!     
+//!     // Warning: Descriptors below are on a test network and only serve as an example.
+//!     // MAINNET funds sent to addresses controlled by these descriptors will be LOST!
 //!     const EXTERNAL_DESCRIPTOR: &str = "tr(tprv8ZgxMBicQKsPdrjwWCyXqqJ4YqcyG4DmKtjjsRt29v1PtD3r3PuFJAjWytzcvSTKnZAGAkPSmnrdnuHWxCAwy3i1iPhrtKAfXRH7dVCNGp6/86'/1'/0'/0/*)#g9xn7wf9";
 //!     const INTERNAL_DESCRIPTOR: &str = "tr(tprv8ZgxMBicQKsPdrjwWCyXqqJ4YqcyG4DmKtjjsRt29v1PtD3r3PuFJAjWytzcvSTKnZAGAkPSmnrdnuHWxCAwy3i1iPhrtKAfXRH7dVCNGp6/86'/1'/0'/1/*)#e3rjrmea";
 //!     
