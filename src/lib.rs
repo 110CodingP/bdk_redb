@@ -888,15 +888,13 @@ mod test {
         keychain_txout, local_chain,
         miniscript::descriptor::Descriptor,
     };
-    #[cfg(feature = "wallet")]
-    use bdk_wallet::keys::DescriptorPublicKey;
+
     use std::sync::Arc;
     use std::{collections::BTreeMap, path::Path};
     use tempfile::NamedTempFile;
 
     use bdk_testenv::{block_id, hash, utils};
 
-    #[cfg(feature = "wallet")]
     const DESCRIPTORS: [&str; 4] = [
         "tr([5940b9b9/86'/0'/0']tpubDDVNqmq75GNPWQ9UNKfP43UwjaHU4GYfoPavojQbfpyfZp2KetWgjGBRRAy4tYCrAA6SB11mhQAkqxjh1VtQHyKwT4oYxpwLaGHvoKmtxZf/1/*)#ypcpw2dr",
         "tr([5940b9b9/86'/0'/0']tpubDDVNqmq75GNPWQ9UNKfP43UwjaHU4GYfoPavojQbfpyfZp2KetWgjGBRRAy4tYCrAA6SB11mhQAkqxjh1VtQHyKwT4oYxpwLaGHvoKmtxZf/0/*)#44aqnlam",
@@ -927,7 +925,6 @@ mod test {
         assert_eq!(network_changeset, Some(Network::Bitcoin));
     }
 
-    #[cfg(feature = "wallet")]
     #[test]
     fn test_keychains_persistence() {
         let tmpfile = NamedTempFile::new().unwrap();
@@ -949,7 +946,6 @@ mod test {
         assert_eq!(*desc_changeset.get(&1).unwrap(), change_descriptor);
     }
 
-    #[cfg(feature = "wallet")]
     #[test]
     fn test_keychains_persistence_second() {
         let tmpfile = NamedTempFile::new().unwrap();
@@ -972,7 +968,6 @@ mod test {
         assert_eq!(*desc_changeset.get(&1).unwrap(), change_descriptor);
     }
 
-    #[cfg(feature = "wallet")]
     #[test]
     fn test_single_desc_persistence() {
         let tmpfile = NamedTempFile::new().unwrap();
@@ -993,7 +988,6 @@ mod test {
         assert_eq!(desc_changeset.get(&1), None);
     }
 
-    #[cfg(feature = "wallet")]
     #[test]
     fn test_descriptor_missing() {
         let tmpfile = NamedTempFile::new().unwrap();
