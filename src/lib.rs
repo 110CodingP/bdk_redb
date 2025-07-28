@@ -481,7 +481,7 @@ impl Store {
                 bytes[4..].copy_from_slice(&anchor_block.hash.to_byte_array());
                 table.insert((txid.to_byte_array(), bytes), &anchor.metadata())?;
             } else {
-                panic!("txn corresponding to anchor must exist");
+                return Err(StoreError::TxMissing(*txid));
             }
         }
         Ok(())
@@ -504,7 +504,7 @@ impl Store {
             if txs_table.get(txid.to_byte_array())?.is_some() || found {
                 table.insert(txid.to_byte_array(), *last_seen_time)?;
             } else {
-                panic!("txn must exist before persisting last_seen");
+                return Err(StoreError::TxMissing(*txid));
             }
         }
         Ok(())
@@ -527,7 +527,7 @@ impl Store {
             if txs_table.get(txid.to_byte_array())?.is_some() || found {
                 table.insert(txid.to_byte_array(), last_evicted_time)?;
             } else {
-                panic!("txn must exist before persisting last_evicted");
+                return Err(StoreError::TxMissing(*txid));
             }
         }
         Ok(())
@@ -550,7 +550,7 @@ impl Store {
             if txs_table.get(txid.to_byte_array())?.is_some() || found {
                 table.insert(txid.to_byte_array(), first_seen_time)?;
             } else {
-                panic!("txn must exist before persisting first_seen");
+                return Err(StoreError::TxMissing(*txid));
             }
         }
         Ok(())
@@ -1165,28 +1165,39 @@ mod test {
     }
 
     #[test]
-    #[should_panic]
     fn test_last_seen_missing_txn() {
         // to hit the branch for the panic case in persist_last_seen
         let tmpfile = NamedTempFile::new().unwrap();
         let db = create_db(tmpfile.path());
         let store = create_test_store(Arc::new(db), "wallet1");
 
-        let last_seen: BTreeMap<Txid, u64> =
-            [(hash!("B"), 100), (hash!("T"), 120), (hash!("C"), 121)].into();
+        let tx1 = Arc::new(create_one_inp_one_out_tx(
+            Txid::from_byte_array([0; 32]),
+            30_000,
+        ));
+        let tx2 = Arc::new(create_one_inp_one_out_tx(tx1.compute_txid(), 20_000));
+
+        let last_seen: BTreeMap<Txid, u64> = [
+            (hash!("B"), 100),
+            (tx1.compute_txid(), 120),
+            (tx2.compute_txid(), 121),
+        ]
+        .into();
 
         let write_tx = store.db.begin_write().unwrap();
         let _ = write_tx.open_table(store.txs_table_defn()).unwrap();
         let _ = write_tx.open_table(store.last_seen_defn()).unwrap();
         write_tx.commit().unwrap();
 
-        let txs: BTreeSet<Arc<Transaction>> = BTreeSet::new();
+        let txs: BTreeSet<Arc<Transaction>> = [tx1, tx2].into();
 
         let write_tx = store.db.begin_write().unwrap();
         let read_tx = store.db.begin_read().unwrap();
-        store
-            .persist_last_seen(&write_tx, &read_tx, &last_seen, &txs)
-            .unwrap();
+        match store.persist_last_seen(&write_tx, &read_tx, &last_seen, &txs) {
+            Ok(_) => panic!("should give error since tx missing"),
+            Err(StoreError::TxMissing(txid)) => assert_eq!(txid, hash!("B")),
+            Err(_) => panic!("error should only be due to missing tx"),
+        }
         write_tx.commit().unwrap();
     }
 
@@ -1262,15 +1273,24 @@ mod test {
     }
 
     #[test]
-    #[should_panic]
     fn test_last_evicted_missing_txs() {
         // to hit the branch for the panic case in persist_last_evicted
         let tmpfile = NamedTempFile::new().unwrap();
         let db = create_db(tmpfile.path());
         let store = create_test_store(Arc::new(db), "wallet1");
 
-        let last_evicted: BTreeMap<Txid, u64> =
-            [(hash!("B"), 100), (hash!("D"), 120), (hash!("K"), 132)].into();
+        let tx1 = Arc::new(create_one_inp_one_out_tx(
+            Txid::from_byte_array([0; 32]),
+            30_000,
+        ));
+        let tx2 = Arc::new(create_one_inp_one_out_tx(tx1.compute_txid(), 20_000));
+
+        let last_evicted: BTreeMap<Txid, u64> = [
+            (hash!("B"), 100),
+            (tx1.compute_txid(), 120),
+            (tx2.compute_txid(), 132),
+        ]
+        .into();
 
         let write_tx = store.db.begin_write().unwrap();
         let _ = write_tx.open_table(store.txs_table_defn()).unwrap();
@@ -1279,13 +1299,15 @@ mod test {
             .unwrap();
         write_tx.commit().unwrap();
 
-        let txs: BTreeSet<Arc<Transaction>> = BTreeSet::new();
+        let txs: BTreeSet<Arc<Transaction>> = [tx1, tx2].into();
 
         let write_tx = store.db.begin_write().unwrap();
         let read_tx = store.db.begin_read().unwrap();
-        store
-            .persist_last_evicted(&write_tx, &read_tx, &last_evicted, &txs)
-            .unwrap();
+        match store.persist_last_evicted(&write_tx, &read_tx, &last_evicted, &txs) {
+            Ok(_) => panic!("should give error since tx missing"),
+            Err(StoreError::TxMissing(txid)) => assert_eq!(txid, hash!("B")),
+            Err(_) => panic!("error should only be due to missing tx"),
+        }
         write_tx.commit().unwrap();
     }
 
@@ -1357,28 +1379,39 @@ mod test {
     }
 
     #[test]
-    #[should_panic]
     fn test_first_seen_missing_tx() {
         // to hit the branch for the panic case persist_first_seen
         let tmpfile = NamedTempFile::new().unwrap();
         let db = create_db(tmpfile.path());
         let store = create_test_store(Arc::new(db), "wallet1");
 
-        let first_seen: BTreeMap<Txid, u64> =
-            [(hash!("B"), 100), (hash!("T"), 120), (hash!("C"), 121)].into();
+        let tx1 = Arc::new(create_one_inp_one_out_tx(
+            Txid::from_byte_array([0; 32]),
+            30_000,
+        ));
+        let tx2 = Arc::new(create_one_inp_one_out_tx(tx1.compute_txid(), 20_000));
+
+        let first_seen: BTreeMap<Txid, u64> = [
+            (hash!("B"), 100),
+            (tx1.compute_txid(), 120),
+            (tx2.compute_txid(), 121),
+        ]
+        .into();
 
         let write_tx = store.db.begin_write().unwrap();
         let _ = write_tx.open_table(store.txs_table_defn()).unwrap();
         let _ = write_tx.open_table(store.first_seen_table_defn()).unwrap();
         write_tx.commit().unwrap();
 
-        let txs: BTreeSet<Arc<Transaction>> = BTreeSet::new();
+        let txs: BTreeSet<Arc<Transaction>> = [tx1, tx2].into();
 
         let write_tx = store.db.begin_write().unwrap();
         let read_tx = store.db.begin_read().unwrap();
-        store
-            .persist_first_seen(&write_tx, &read_tx, &first_seen, &txs)
-            .unwrap();
+        match store.persist_first_seen(&write_tx, &read_tx, &first_seen, &txs) {
+            Ok(_) => panic!("should give error since tx missing"),
+            Err(StoreError::TxMissing(txid)) => assert_eq!(txid, hash!("B")),
+            Err(_) => panic!("error should only be due to missing tx"),
+        }
         write_tx.commit().unwrap();
     }
 
@@ -1577,7 +1610,6 @@ mod test {
     }
 
     #[test]
-    #[should_panic]
     fn test_anchors_missing_tx() {
         // to hit the branch for the panic case in persist_anchors
         let tmpfile = NamedTempFile::new().unwrap();
@@ -1602,7 +1634,11 @@ mod test {
 
         let write_tx = store.db.begin_write().unwrap();
         let read_tx = store.db.begin_read().unwrap();
-        let _ = store.persist_anchors(&write_tx, &read_tx, &anchors_missing_txs, &txs);
+        match store.persist_anchors(&write_tx, &read_tx, &anchors_missing_txs, &txs) {
+            Ok(_) => panic!("should give error since tx missing"),
+            Err(StoreError::TxMissing(txid)) => assert_eq!(txid, hash!("B")),
+            Err(_) => panic!("error should only be due to missing tx"),
+        }
         read_tx.close().unwrap();
         write_tx.commit().unwrap();
     }
