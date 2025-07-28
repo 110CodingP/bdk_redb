@@ -1,5 +1,6 @@
 #![warn(missing_docs)]
 //! This module contains the crate's error type.
+use bdk_chain::bitcoin;
 use std::io::Error as IoError;
 
 #[derive(Debug, thiserror::Error)]
@@ -34,4 +35,8 @@ pub enum StoreError {
     /// [`BlockHash`]: <https://docs.rs/bitcoin/latest/bitcoin/struct.BlockHash.html>
     #[error("BlockHash deserialization error: {0}")]
     BlockHashFromSlice(#[from] bdk_chain::bitcoin::hashes::FromSliceError),
+    /// Error thrown when tx corresponding to txid is not found while persisting
+    /// anchors, last_seen, last_evicted or first_seen.
+    #[error("Tx corresponding to txid is missing")]
+    TxMissing(bitcoin::Txid),
 }
