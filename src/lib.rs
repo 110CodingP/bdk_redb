@@ -108,6 +108,7 @@ const NETWORK: TableDefinition<&str, String> = TableDefinition::new("network");
 /// This is the primary struct of this crate. It holds the database corresponding to a wallet.
 /// It also holds the table names of redb tables which are specific to each wallet in a database
 /// file.
+#[derive(Debug)]
 pub struct Store {
     // We use a reference so as to avoid taking ownership of the Database, allowing other
     // applications to write to it. Arc is for thread safety.
