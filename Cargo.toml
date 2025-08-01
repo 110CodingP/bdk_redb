@@ -13,7 +13,6 @@ bdk_wallet = {version = "2.0.0", optional = true}
 bdk_chain = {version = "0.23.0", features = ["serde"]}
 ciborium = "0.2.2"
 redb = "2.5.0"
-tempfile = "3.20.0"
 thiserror = "2.0.12"
 
 [features]
@@ -23,6 +22,7 @@ wallet = ["bdk_wallet"]
 [dev-dependencies]
 anyhow = "1.0.98"
 bdk_testenv = { version = "0.13.0" }
+tempfile = "3.20.0"
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage,coverage_nightly)'] }
