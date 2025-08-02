@@ -9,7 +9,7 @@ readme = "README.md"
 rust-version = "1.85.0"
 
 [dependencies]
-bdk_wallet = {version = "2.0.0", optional = true}
+bdk_wallet = {git = "https://github.com/110CodingP/bdk_wallet", branch = "add_persist_test_utils", optional = true}
 bdk_chain = {version = "0.23.0", features = ["serde"]}
 ciborium = "0.2.2"
 redb = "2.5.0"
@@ -23,6 +23,8 @@ wallet = ["bdk_wallet"]
 anyhow = "1.0.98"
 bdk_testenv = { version = "0.13.0" }
 tempfile = "3.20.0"
+bdk_wallet = {git = "https://github.com/110CodingP/bdk_wallet", branch = "add_persist_test_utils", features = ["test-utils"]}
+bdk_chain = {version = "0.23.0", features = ["serde"]}
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage,coverage_nightly)'] }

@@ -2153,4 +2153,15 @@ mod test {
         store2.read_wallet(&mut changeset_read).unwrap();
         assert_eq!(changeset_read, changeset2);
     }
+
+    #[cfg(feature = "wallet")]
+    #[test]
+    fn wallet_is_persisted() {
+        use bdk_wallet::persist_test_utils::persist_wallet_changeset;
+
+        persist_wallet_changeset("wallet.redb", |path| {
+            let db = redb::Database::create(path)?;
+            Ok(Store::new(Arc::new(db), "wallet".to_string())?)
+        });
+    }
 }
