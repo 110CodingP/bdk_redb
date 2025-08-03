@@ -890,6 +890,7 @@ mod test {
         miniscript::descriptor::Descriptor,
     };
 
+    use bdk_testenv::persist_test_utils::persist_txgraph_changeset;
     use std::sync::Arc;
     use std::{collections::BTreeMap, path::Path};
     use tempfile::NamedTempFile;
@@ -2163,5 +2164,51 @@ mod test {
             let db = redb::Database::create(path)?;
             Ok(Store::new(Arc::new(db), "wallet".to_string())?)
         });
+    }
+
+    #[test]
+    fn txgraph_is_persisted() {
+        // const DB_MAGIC: &[u8] = &[0x21, 0x24, 0x48];
+        // persist_txgraph_changeset::<bdk_wallet::file_store::Store<tx_graph::ChangeSet<ConfirmationBlockTime>>, _, _, _>(
+        //     "store.db",
+        //     |path| Ok(bdk_wallet::file_store::Store::create(DB_MAGIC, path)?),
+        //     |db| Ok(db.dump().map(Option::unwrap_or_default)?),
+        //     |db, changeset| Ok(db.append(changeset)?),
+        // );
+
+        // persist_txgraph_changeset::<bdk_chain::rusqlite::Connection, _, _, _>(
+        //     "store.sqlite",
+        //     |path| Ok(bdk_chain::rusqlite::Connection::open(path)?),
+        //     |db| {
+        //         let db_tx = db.transaction()?;
+        //         tx_graph::ChangeSet::<ConfirmationBlockTime>::init_sqlite_tables(&db_tx)?;
+        //         let changeset = tx_graph::ChangeSet::<ConfirmationBlockTime>::from_sqlite(&db_tx)?;
+        //         db_tx.commit()?;
+        //         Ok(changeset)
+        //     },
+        //     |db, changeset| {
+        //         let db_tx = db.transaction()?;
+        //         changeset.persist_to_sqlite(&db_tx)?;
+        //         Ok(db_tx.commit()?)
+        //     },
+        // );
+
+        persist_txgraph_changeset(
+            "wallet.redb",
+            |path| {
+                let db = redb::Database::create(path)?;
+                Ok(Store::new(Arc::new(db), "wallet".to_string())?)
+            },
+            |db| {
+                db.create_tables::<ConfirmationBlockTime>()?;
+                let mut changeset = tx_graph::ChangeSet::<ConfirmationBlockTime>::default();
+                db.read_tx_graph(&mut changeset)?;
+                Ok(changeset)
+            },
+            |db, changeset| {
+                db.persist_tx_graph(changeset)?;
+                Ok(())
+            },
+        );
     }
 }
