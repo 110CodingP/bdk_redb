@@ -890,7 +890,7 @@ mod test {
         miniscript::descriptor::Descriptor,
     };
 
-    use bdk_testenv::persist_test_utils::persist_txgraph_changeset;
+    use bdk_testenv::persist_test_utils::{persist_indexer_changeset, persist_txgraph_changeset};
     use std::sync::Arc;
     use std::{collections::BTreeMap, path::Path};
     use tempfile::NamedTempFile;
@@ -2182,7 +2182,8 @@ mod test {
         //     |db| {
         //         let db_tx = db.transaction()?;
         //         tx_graph::ChangeSet::<ConfirmationBlockTime>::init_sqlite_tables(&db_tx)?;
-        //         let changeset = tx_graph::ChangeSet::<ConfirmationBlockTime>::from_sqlite(&db_tx)?;
+        //         let changeset =
+        // tx_graph::ChangeSet::<ConfirmationBlockTime>::from_sqlite(&db_tx)?;
         //         db_tx.commit()?;
         //         Ok(changeset)
         //     },
@@ -2207,6 +2208,53 @@ mod test {
             },
             |db, changeset| {
                 db.persist_tx_graph(changeset)?;
+                Ok(())
+            },
+        );
+    }
+
+    #[test]
+    fn indexer_is_persisted() {
+        // const DB_MAGIC: &[u8] = &[0x21, 0x24, 0x48];
+        // persist_indexer_changeset::<bdk_wallet::file_store::Store<keychain_txout::ChangeSet>, _,
+        // _, _>(     "store.db",
+        //     |path| Ok(bdk_wallet::file_store::Store::create(DB_MAGIC, path)?),
+        //     |db| Ok(db.dump().map(Option::unwrap_or_default)?),
+        //     |db, changeset| Ok(db.append(changeset)?),
+        // );
+
+        // persist_indexer_changeset::<bdk_chain::rusqlite::Connection, _, _, _>(
+        //     "store.sqlite",
+        //     |path| Ok(bdk_chain::rusqlite::Connection::open(path)?),
+        //     |db| {
+        //         let db_tx = db.transaction()?;
+        //         keychain_txout::ChangeSet::init_sqlite_tables(&db_tx)?;
+        //         let changeset =
+        // keychain_txout::ChangeSet::from_sqlite(&db_tx)?;
+        //         db_tx.commit()?;
+        //         Ok(changeset)
+        //     },
+        //     |db, changeset| {
+        //         let db_tx = db.transaction()?;
+        //         changeset.persist_to_sqlite(&db_tx)?;
+        //         Ok(db_tx.commit()?)
+        //     },
+        // );
+
+        persist_indexer_changeset(
+            "wallet.redb",
+            |path| {
+                let db = redb::Database::create(path)?;
+                Ok(Store::new(Arc::new(db), "wallet".to_string())?)
+            },
+            |db| {
+                db.create_tables::<ConfirmationBlockTime>()?;
+                let mut changeset = keychain_txout::ChangeSet::default();
+                db.read_indexer(&mut changeset)?;
+                Ok(changeset)
+            },
+            |db, changeset| {
+                db.persist_indexer(changeset)?;
                 Ok(())
             },
         );
