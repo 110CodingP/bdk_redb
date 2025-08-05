@@ -930,6 +930,7 @@ mod test {
         assert_eq!(network_changeset, Some(Network::Bitcoin));
     }
 
+    // do not want to remove for same reason as network
     #[test]
     fn test_keychains_persistence() {
         let tmpfile = NamedTempFile::new().unwrap();
@@ -2047,6 +2048,49 @@ mod test {
         use bdk_wallet::persist_test_utils::persist_network;
 
         persist_network("wallet.redb", |path| {
+            let db = redb::Database::create(path)?;
+            Ok(Store::new(Arc::new(db), "wallet".to_string())?)
+        });
+    }
+
+    #[cfg(feature = "wallet")]
+    #[test]
+    fn keychains_are_persisted() {
+        use bdk_wallet::persist_test_utils::persist_keychains;
+
+        persist_keychains("wallet.redb", |path| {
+            let db = redb::Database::create(path)?;
+            Ok(Store::new(Arc::new(db), "wallet".to_string())?)
+        });
+    }
+
+    #[cfg(feature = "wallet")]
+    #[test]
+    fn reversed_keychains_are_persisted() {
+        use bdk_wallet::persist_test_utils::persist_keychains_reversed;
+
+        // const DB_MAGIC: &[u8] = &[0x21, 0x24, 0x48];
+        // persist_keychains_reversed::<bdk_wallet::file_store::Store<ChangeSet>, _>(
+        //     "store.db",
+        //     |path| Ok(bdk_wallet::file_store::Store::create(DB_MAGIC, path)?),
+        // );
+
+        // persist_keychains_reversed::<bdk_chain::rusqlite::Connection, _>("store.sqlite", |path| {
+        //     Ok(bdk_chain::rusqlite::Connection::open(path)?)
+        // });
+
+        persist_keychains_reversed("wallet.redb", |path| {
+            let db = redb::Database::create(path)?;
+            Ok(Store::new(Arc::new(db), "wallet".to_string())?)
+        });
+    }
+
+    #[cfg(feature = "wallet")]
+    #[test]
+    fn keychain_is_persisted() {
+        use bdk_wallet::persist_test_utils::persist_single_keychain;
+
+        persist_single_keychain("wallet.redb", |path| {
             let db = redb::Database::create(path)?;
             Ok(Store::new(Arc::new(db), "wallet".to_string())?)
         });
