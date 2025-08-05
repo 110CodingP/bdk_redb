@@ -891,7 +891,7 @@ mod test {
     };
 
     use bdk_testenv::persist_test_utils::{
-        persist_indexer_changeset, persist_local_chain_changeset, persist_txgraph_changeset,
+        persist_indexer_changeset, persist_local_chain_changeset, persist_txgraph_changeset, persist_last_seen
     };
     use std::sync::Arc;
     use std::{collections::BTreeMap, path::Path};
@@ -1098,74 +1098,7 @@ mod test {
             }],
         }
     }
-
-    #[test]
-    fn test_persist_last_seen() {
-        let tmpfile = NamedTempFile::new().unwrap();
-        let db = create_db(tmpfile.path());
-        let store = create_test_store(Arc::new(db), "wallet1");
-
-        let tx1 = Arc::new(create_one_inp_one_out_tx(
-            Txid::from_byte_array([0; 32]),
-            30_000,
-        ));
-        let tx2 = Arc::new(create_one_inp_one_out_tx(tx1.compute_txid(), 20_000));
-        let tx3 = Arc::new(create_one_inp_one_out_tx(tx2.compute_txid(), 19_000));
-
-        // try persisting and reading last_seen
-        let txs: BTreeSet<Arc<Transaction>> = [tx1.clone(), tx2.clone()].into();
-        let mut last_seen: BTreeMap<Txid, u64> =
-            [(tx1.compute_txid(), 100), (tx2.compute_txid(), 120)].into();
-
-        let write_tx = store.db.begin_write().unwrap();
-        let _ = write_tx.open_table(store.txs_table_defn()).unwrap();
-        let _ = write_tx.open_table(store.last_seen_defn()).unwrap();
-        write_tx.commit().unwrap();
-
-        let write_tx = store.db.begin_write().unwrap();
-        store.persist_txs(&write_tx, &txs).unwrap();
-        write_tx.commit().unwrap();
-
-        // to hit the branch for the case when tx is persisted but not in changeset
-        let txs: BTreeSet<Arc<Transaction>> = BTreeSet::new();
-
-        let write_tx = store.db.begin_write().unwrap();
-        let read_tx = store.db.begin_read().unwrap();
-        store
-            .persist_last_seen(&write_tx, &read_tx, &last_seen, &txs)
-            .unwrap();
-        write_tx.commit().unwrap();
-
-        let read_tx = store.db.begin_read().unwrap();
-        let mut last_seen_read: BTreeMap<Txid, u64> = BTreeMap::new();
-        store.read_last_seen(&read_tx, &mut last_seen_read).unwrap();
-        assert_eq!(last_seen_read, last_seen);
-
-        // persist another last_seen and see if what is read is same as merged one
-        let txs_new: BTreeSet<Arc<Transaction>> = [tx3.clone()].into();
-        let last_seen_new: BTreeMap<Txid, u64> = [(tx3.compute_txid(), 200)].into();
-
-        let write_tx = store.db.begin_write().unwrap();
-        let _ = write_tx.open_table(store.txs_table_defn()).unwrap();
-        let _ = write_tx.open_table(store.last_seen_defn()).unwrap();
-        write_tx.commit().unwrap();
-
-        let write_tx = store.db.begin_write().unwrap();
-        let read_tx = store.db.begin_read().unwrap();
-        store
-            .persist_last_seen(&write_tx, &read_tx, &last_seen_new, &txs_new)
-            .unwrap();
-        write_tx.commit().unwrap();
-
-        let read_tx = store.db.begin_read().unwrap();
-        let mut last_seen_read_new: BTreeMap<Txid, u64> = BTreeMap::new();
-        store
-            .read_last_seen(&read_tx, &mut last_seen_read_new)
-            .unwrap();
-        last_seen.merge(last_seen_new);
-        assert_eq!(last_seen_read_new, last_seen);
-    }
-
+    
     #[test]
     fn test_last_seen_missing_txn() {
         // to hit the branch for the panic case in persist_last_seen
@@ -2094,5 +2027,26 @@ mod test {
             let db = redb::Database::create(path)?;
             Ok(Store::new(Arc::new(db), "wallet".to_string())?)
         });
+    }
+
+    #[test]
+    fn last_seen_is_persisted() {
+        persist_last_seen(
+            "wallet.redb",
+            |path| {
+                let db = redb::Database::create(path)?;
+                Ok(Store::new(Arc::new(db), "wallet".to_string())?)
+            },
+            |db| {
+                db.create_tables::<ConfirmationBlockTime>()?;
+                let mut changeset = tx_graph::ChangeSet::<ConfirmationBlockTime>::default();
+                db.read_tx_graph(&mut changeset)?;
+                Ok(changeset)
+            },
+            |db, changeset| {
+                db.persist_tx_graph(changeset)?;
+                Ok(())
+            },
+        );
     }
 }
