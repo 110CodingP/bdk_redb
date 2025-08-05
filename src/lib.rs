@@ -890,7 +890,9 @@ mod test {
         miniscript::descriptor::Descriptor,
     };
 
-    use bdk_testenv::persist_test_utils::{persist_indexer_changeset, persist_txgraph_changeset};
+    use bdk_testenv::persist_test_utils::{
+        persist_indexer_changeset, persist_local_chain_changeset, persist_txgraph_changeset,
+    };
     use std::sync::Arc;
     use std::{collections::BTreeMap, path::Path};
     use tempfile::NamedTempFile;
@@ -2255,6 +2257,27 @@ mod test {
             },
             |db, changeset| {
                 db.persist_indexer(changeset)?;
+                Ok(())
+            },
+        );
+    }
+
+    #[test]
+    fn local_chain_is_persisted() {
+        persist_local_chain_changeset(
+            "wallet.redb",
+            |path| {
+                let db = redb::Database::create(path)?;
+                Ok(Store::new(Arc::new(db), "wallet".to_string())?)
+            },
+            |db| {
+                db.create_tables::<ConfirmationBlockTime>()?;
+                let mut changeset = local_chain::ChangeSet::default();
+                db.read_local_chain(&mut changeset)?;
+                Ok(changeset)
+            },
+            |db, changeset| {
+                db.persist_local_chain(changeset)?;
                 Ok(())
             },
         );
