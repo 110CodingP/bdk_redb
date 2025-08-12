@@ -13,7 +13,7 @@
 //! ```toml
 //! [dependencies]
 //! anyhow = "1.0.98"
-//! bdk_redb = { version = "0.1.0" }
+//! bdk_redb = "0.1.1"
 //! bdk_wallet = "2.0.0"
 //! tempfile = "3.20.0"
 //! ```
