@@ -890,6 +890,9 @@ mod test {
         miniscript::descriptor::Descriptor,
     };
 
+    use bdk_testenv::persist_test_utils::{
+        persist_indexer_changeset, persist_local_chain_changeset, persist_txgraph_changeset, persist_last_seen
+    };
     use std::sync::Arc;
     use std::{collections::BTreeMap, path::Path};
     use tempfile::NamedTempFile;
@@ -911,6 +914,7 @@ mod test {
         Store::new(db, wallet_name.to_string()).unwrap()
     }
 
+    // do not want to remove as there might be the other test is gated behind the wallet feature.
     #[test]
     fn test_network_persistence() {
         let tmpfile = NamedTempFile::new().unwrap();
@@ -926,6 +930,7 @@ mod test {
         assert_eq!(network_changeset, Some(Network::Bitcoin));
     }
 
+    // do not want to remove for same reason as network
     #[test]
     fn test_keychains_persistence() {
         let tmpfile = NamedTempFile::new().unwrap();
@@ -1002,6 +1007,8 @@ mod test {
         assert_eq!(desc_changeset.get(&1), None);
     }
 
+    // can't be removed as this tests that when (2,None) is in changeset to be persisted, it removes
+    // the checkpoint at height 2 from the table.
     #[test]
     fn test_local_chain_persistence() {
         let tmpfile = NamedTempFile::new().unwrap();
@@ -1091,74 +1098,7 @@ mod test {
             }],
         }
     }
-
-    #[test]
-    fn test_persist_last_seen() {
-        let tmpfile = NamedTempFile::new().unwrap();
-        let db = create_db(tmpfile.path());
-        let store = create_test_store(Arc::new(db), "wallet1");
-
-        let tx1 = Arc::new(create_one_inp_one_out_tx(
-            Txid::from_byte_array([0; 32]),
-            30_000,
-        ));
-        let tx2 = Arc::new(create_one_inp_one_out_tx(tx1.compute_txid(), 20_000));
-        let tx3 = Arc::new(create_one_inp_one_out_tx(tx2.compute_txid(), 19_000));
-
-        // try persisting and reading last_seen
-        let txs: BTreeSet<Arc<Transaction>> = [tx1.clone(), tx2.clone()].into();
-        let mut last_seen: BTreeMap<Txid, u64> =
-            [(tx1.compute_txid(), 100), (tx2.compute_txid(), 120)].into();
-
-        let write_tx = store.db.begin_write().unwrap();
-        let _ = write_tx.open_table(store.txs_table_defn()).unwrap();
-        let _ = write_tx.open_table(store.last_seen_defn()).unwrap();
-        write_tx.commit().unwrap();
-
-        let write_tx = store.db.begin_write().unwrap();
-        store.persist_txs(&write_tx, &txs).unwrap();
-        write_tx.commit().unwrap();
-
-        // to hit the branch for the case when tx is persisted but not in changeset
-        let txs: BTreeSet<Arc<Transaction>> = BTreeSet::new();
-
-        let write_tx = store.db.begin_write().unwrap();
-        let read_tx = store.db.begin_read().unwrap();
-        store
-            .persist_last_seen(&write_tx, &read_tx, &last_seen, &txs)
-            .unwrap();
-        write_tx.commit().unwrap();
-
-        let read_tx = store.db.begin_read().unwrap();
-        let mut last_seen_read: BTreeMap<Txid, u64> = BTreeMap::new();
-        store.read_last_seen(&read_tx, &mut last_seen_read).unwrap();
-        assert_eq!(last_seen_read, last_seen);
-
-        // persist another last_seen and see if what is read is same as merged one
-        let txs_new: BTreeSet<Arc<Transaction>> = [tx3.clone()].into();
-        let last_seen_new: BTreeMap<Txid, u64> = [(tx3.compute_txid(), 200)].into();
-
-        let write_tx = store.db.begin_write().unwrap();
-        let _ = write_tx.open_table(store.txs_table_defn()).unwrap();
-        let _ = write_tx.open_table(store.last_seen_defn()).unwrap();
-        write_tx.commit().unwrap();
-
-        let write_tx = store.db.begin_write().unwrap();
-        let read_tx = store.db.begin_read().unwrap();
-        store
-            .persist_last_seen(&write_tx, &read_tx, &last_seen_new, &txs_new)
-            .unwrap();
-        write_tx.commit().unwrap();
-
-        let read_tx = store.db.begin_read().unwrap();
-        let mut last_seen_read_new: BTreeMap<Txid, u64> = BTreeMap::new();
-        store
-            .read_last_seen(&read_tx, &mut last_seen_read_new)
-            .unwrap();
-        last_seen.merge(last_seen_new);
-        assert_eq!(last_seen_read_new, last_seen);
-    }
-
+    
     #[test]
     fn test_last_seen_missing_txn() {
         // to hit the branch for the panic case in persist_last_seen
@@ -1697,68 +1637,6 @@ mod test {
         assert_eq!(anchors_read_new, anchors);
     }
 
-    #[test]
-    fn test_tx_graph_persistence() {
-        let tmpfile = NamedTempFile::new().unwrap();
-        let db = create_db(tmpfile.path());
-        let store = create_test_store(Arc::new(db), "wallet1");
-        let tx1 = Arc::new(create_one_inp_one_out_tx(
-            Txid::from_byte_array([0; 32]),
-            30_000,
-        ));
-        let tx2 = Arc::new(create_one_inp_one_out_tx(tx1.compute_txid(), 20_000));
-        let block_id = block_id!(100, "B");
-
-        let conf_anchor: ConfirmationBlockTime = ConfirmationBlockTime {
-            block_id,
-            confirmation_time: 1,
-        };
-
-        let mut tx_graph_changeset1 = tx_graph::ChangeSet::<ConfirmationBlockTime> {
-            txs: [tx1.clone()].into(),
-            txouts: [].into(),
-            anchors: [(conf_anchor, tx1.compute_txid())].into(),
-            last_seen: [(tx1.compute_txid(), 100)].into(),
-            first_seen: [(tx1.compute_txid(), 50)].into(),
-            last_evicted: [(tx1.compute_txid(), 150)].into(),
-        };
-
-        store
-            .create_tx_graph_tables::<ConfirmationBlockTime>()
-            .unwrap();
-
-        store.persist_tx_graph(&tx_graph_changeset1).unwrap();
-
-        let mut changeset = tx_graph::ChangeSet::default();
-        store.read_tx_graph(&mut changeset).unwrap();
-        assert_eq!(changeset, tx_graph_changeset1);
-
-        let block_id = block_id!(101, "REDB");
-
-        let conf_anchor: ConfirmationBlockTime = ConfirmationBlockTime {
-            block_id,
-            confirmation_time: 1,
-        };
-
-        let tx_graph_changeset2 = tx_graph::ChangeSet::<ConfirmationBlockTime> {
-            txs: [tx2.clone()].into(),
-            txouts: [].into(),
-            anchors: [(conf_anchor, tx2.compute_txid())].into(),
-            last_seen: [(tx2.compute_txid(), 200)].into(),
-            first_seen: [(tx2.compute_txid(), 100)].into(),
-            last_evicted: [(tx2.compute_txid(), 150)].into(),
-        };
-
-        store.persist_tx_graph(&tx_graph_changeset2).unwrap();
-
-        let mut changeset = tx_graph::ChangeSet::default();
-        store.read_tx_graph(&mut changeset).unwrap();
-
-        tx_graph_changeset1.merge(tx_graph_changeset2);
-
-        assert_eq!(tx_graph_changeset1, changeset);
-    }
-
     fn parse_descriptor(descriptor: &str) -> Descriptor<DescriptorPublicKey> {
         let secp = bdk_chain::bitcoin::secp256k1::Secp256k1::signing_only();
         Descriptor::<DescriptorPublicKey>::parse_descriptor(&secp, descriptor)
@@ -1887,189 +1765,6 @@ mod test {
         assert_eq!(spk_cache, spk_cache_read_new);
     }
 
-    #[test]
-    fn test_indexer_persistence() {
-        let tmpfile = NamedTempFile::new().unwrap();
-        let db = create_db(tmpfile.path());
-        let store = create_test_store(Arc::new(db), "wallet1");
-
-        let descriptor_ids = utils::DESCRIPTORS.map(|d| parse_descriptor(d).descriptor_id());
-
-        let mut keychain_txout_changeset = keychain_txout::ChangeSet {
-            last_revealed: [(descriptor_ids[0], 1), (descriptor_ids[1], 100)].into(),
-            spk_cache: [
-                (
-                    descriptor_ids[0],
-                    [(0u32, ScriptBuf::from_bytes(vec![1, 2, 3]))].into(),
-                ),
-                (
-                    descriptor_ids[1],
-                    [
-                        (100u32, ScriptBuf::from_bytes(vec![3])),
-                        (1000u32, ScriptBuf::from_bytes(vec![5, 6, 8])),
-                    ]
-                    .into(),
-                ),
-            ]
-            .into(),
-        };
-
-        store.create_indexer_tables().unwrap();
-        store.persist_indexer(&keychain_txout_changeset).unwrap();
-
-        let mut changeset = keychain_txout::ChangeSet::default();
-        store.read_indexer(&mut changeset).unwrap();
-
-        let keychain_txout_changeset_new = keychain_txout::ChangeSet {
-            last_revealed: [(descriptor_ids[0], 2)].into(),
-            spk_cache: [(
-                descriptor_ids[0],
-                [(1u32, ScriptBuf::from_bytes(vec![1, 2, 3]))].into(),
-            )]
-            .into(),
-        };
-
-        store
-            .persist_indexer(&keychain_txout_changeset_new)
-            .unwrap();
-
-        let mut changeset_new = keychain_txout::ChangeSet::default();
-        store.read_indexer(&mut changeset_new).unwrap();
-        keychain_txout_changeset.merge(keychain_txout_changeset_new);
-
-        assert_eq!(changeset_new, keychain_txout_changeset);
-    }
-
-    #[cfg(feature = "wallet")]
-    #[test]
-    fn test_persist_wallet() {
-        let tmpfile = NamedTempFile::new().unwrap();
-        let db = Arc::new(create_db(tmpfile.path()));
-        let store = create_test_store(db, "wallet1");
-
-        let descriptor: Descriptor<DescriptorPublicKey> = DESCRIPTORS[0].parse().unwrap();
-        let change_descriptor: Descriptor<DescriptorPublicKey> = DESCRIPTORS[1].parse().unwrap();
-
-        let mut blocks: BTreeMap<u32, Option<BlockHash>> = BTreeMap::new();
-        blocks.insert(0u32, Some(hash!("B")));
-        blocks.insert(1u32, Some(hash!("T")));
-        blocks.insert(2u32, Some(hash!("C")));
-        let local_chain_changeset = local_chain::ChangeSet { blocks };
-
-        let tx1 = Arc::new(create_one_inp_one_out_tx(
-            Txid::from_byte_array([0; 32]),
-            30_000,
-        ));
-        let tx2 = Arc::new(create_one_inp_one_out_tx(tx1.compute_txid(), 20_000));
-
-        let block_id = block_id!(1, "BDK");
-
-        let conf_anchor: ConfirmationBlockTime = ConfirmationBlockTime {
-            block_id,
-            confirmation_time: 123,
-        };
-
-        let tx_graph_changeset = tx_graph::ChangeSet::<ConfirmationBlockTime> {
-            txs: [tx1.clone()].into(),
-            txouts: [].into(),
-            anchors: [(conf_anchor, tx1.compute_txid())].into(),
-            last_seen: [(tx1.compute_txid(), 100)].into(),
-            first_seen: [(tx1.compute_txid(), 80)].into(),
-            last_evicted: [(tx1.compute_txid(), 150)].into(),
-        };
-
-        let keychain_txout_changeset = keychain_txout::ChangeSet {
-            last_revealed: [
-                (descriptor.descriptor_id(), 12),
-                (change_descriptor.descriptor_id(), 10),
-            ]
-            .into(),
-            spk_cache: [
-                (
-                    descriptor.descriptor_id(),
-                    [(0u32, ScriptBuf::from_bytes(vec![245, 123, 112]))].into(),
-                ),
-                (
-                    change_descriptor.descriptor_id(),
-                    [
-                        (100u32, ScriptBuf::from_bytes(vec![145, 234, 98])),
-                        (1000u32, ScriptBuf::from_bytes(vec![5, 6, 8])),
-                    ]
-                    .into(),
-                ),
-            ]
-            .into(),
-        };
-
-        let mut changeset = ChangeSet {
-            descriptor: Some(descriptor.clone()),
-            change_descriptor: Some(change_descriptor.clone()),
-            network: Some(Network::Bitcoin),
-            local_chain: local_chain_changeset,
-            tx_graph: tx_graph_changeset,
-            indexer: keychain_txout_changeset,
-        };
-
-        store.create_tables::<ConfirmationBlockTime>().unwrap();
-
-        store.persist_wallet(&changeset).unwrap();
-        let mut changeset_read = ChangeSet::default();
-        store.read_wallet(&mut changeset_read).unwrap();
-
-        assert_eq!(changeset, changeset_read);
-
-        let mut blocks: BTreeMap<u32, Option<BlockHash>> = BTreeMap::new();
-        blocks.insert(4u32, Some(hash!("RE")));
-        blocks.insert(5u32, Some(hash!("DB")));
-        let local_chain_changeset = local_chain::ChangeSet { blocks };
-
-        let block_id = block_id!(2, "Bitcoin");
-
-        let conf_anchor: ConfirmationBlockTime = ConfirmationBlockTime {
-            block_id,
-            confirmation_time: 214,
-        };
-
-        let tx_graph_changeset = tx_graph::ChangeSet::<ConfirmationBlockTime> {
-            txs: [tx2.clone()].into(),
-            txouts: [].into(),
-            anchors: [(conf_anchor, tx2.compute_txid())].into(),
-            last_seen: [(tx2.compute_txid(), 200)].into(),
-            first_seen: [(tx2.compute_txid(), 160)].into(),
-            last_evicted: [(tx2.compute_txid(), 300)].into(),
-        };
-
-        let keychain_txout_changeset = keychain_txout::ChangeSet {
-            last_revealed: [(descriptor.descriptor_id(), 14)].into(),
-            spk_cache: [(
-                change_descriptor.descriptor_id(),
-                [
-                    (102u32, ScriptBuf::from_bytes(vec![8, 45, 78])),
-                    (1001u32, ScriptBuf::from_bytes(vec![29, 56, 47])),
-                ]
-                .into(),
-            )]
-            .into(),
-        };
-
-        let changeset_new = ChangeSet {
-            descriptor: Some(descriptor),
-            change_descriptor: Some(change_descriptor),
-            network: Some(Network::Bitcoin),
-            local_chain: local_chain_changeset,
-            tx_graph: tx_graph_changeset,
-            indexer: keychain_txout_changeset,
-        };
-
-        store.persist_wallet(&changeset_new).unwrap();
-        let mut changeset_read_new = ChangeSet::default();
-        store.read_wallet(&mut changeset_read_new).unwrap();
-
-        changeset.merge(changeset_new);
-
-        assert_eq!(changeset, changeset_read_new);
-    }
-
     #[cfg(feature = "wallet")]
     #[test]
     fn test_persist_multi_wallet() {
@@ -2152,5 +1847,206 @@ mod test {
         let mut changeset_read = ChangeSet::default();
         store2.read_wallet(&mut changeset_read).unwrap();
         assert_eq!(changeset_read, changeset2);
+    }
+
+    #[cfg(feature = "wallet")]
+    #[test]
+    fn wallet_is_persisted() {
+        use bdk_wallet::persist_test_utils::persist_wallet_changeset;
+
+        persist_wallet_changeset("wallet.redb", |path| {
+            let db = redb::Database::create(path)?;
+            Ok(Store::new(Arc::new(db), "wallet".to_string())?)
+        });
+    }
+
+    #[test]
+    fn txgraph_is_persisted() {
+        // const DB_MAGIC: &[u8] = &[0x21, 0x24, 0x48];
+        // persist_txgraph_changeset::<bdk_wallet::file_store::Store<tx_graph::ChangeSet<ConfirmationBlockTime>>, _, _, _>(
+        //     "store.db",
+        //     |path| Ok(bdk_wallet::file_store::Store::create(DB_MAGIC, path)?),
+        //     |db| Ok(db.dump().map(Option::unwrap_or_default)?),
+        //     |db, changeset| Ok(db.append(changeset)?),
+        // );
+
+        // persist_txgraph_changeset::<bdk_chain::rusqlite::Connection, _, _, _>(
+        //     "store.sqlite",
+        //     |path| Ok(bdk_chain::rusqlite::Connection::open(path)?),
+        //     |db| {
+        //         let db_tx = db.transaction()?;
+        //         tx_graph::ChangeSet::<ConfirmationBlockTime>::init_sqlite_tables(&db_tx)?;
+        //         let changeset =
+        // tx_graph::ChangeSet::<ConfirmationBlockTime>::from_sqlite(&db_tx)?;
+        //         db_tx.commit()?;
+        //         Ok(changeset)
+        //     },
+        //     |db, changeset| {
+        //         let db_tx = db.transaction()?;
+        //         changeset.persist_to_sqlite(&db_tx)?;
+        //         Ok(db_tx.commit()?)
+        //     },
+        // );
+
+        persist_txgraph_changeset(
+            "wallet.redb",
+            |path| {
+                let db = redb::Database::create(path)?;
+                Ok(Store::new(Arc::new(db), "wallet".to_string())?)
+            },
+            |db| {
+                db.create_tables::<ConfirmationBlockTime>()?;
+                let mut changeset = tx_graph::ChangeSet::<ConfirmationBlockTime>::default();
+                db.read_tx_graph(&mut changeset)?;
+                Ok(changeset)
+            },
+            |db, changeset| {
+                db.persist_tx_graph(changeset)?;
+                Ok(())
+            },
+        );
+    }
+
+    #[test]
+    fn indexer_is_persisted() {
+        // const DB_MAGIC: &[u8] = &[0x21, 0x24, 0x48];
+        // persist_indexer_changeset::<bdk_wallet::file_store::Store<keychain_txout::ChangeSet>, _,
+        // _, _>(     "store.db",
+        //     |path| Ok(bdk_wallet::file_store::Store::create(DB_MAGIC, path)?),
+        //     |db| Ok(db.dump().map(Option::unwrap_or_default)?),
+        //     |db, changeset| Ok(db.append(changeset)?),
+        // );
+
+        // persist_indexer_changeset::<bdk_chain::rusqlite::Connection, _, _, _>(
+        //     "store.sqlite",
+        //     |path| Ok(bdk_chain::rusqlite::Connection::open(path)?),
+        //     |db| {
+        //         let db_tx = db.transaction()?;
+        //         keychain_txout::ChangeSet::init_sqlite_tables(&db_tx)?;
+        //         let changeset =
+        // keychain_txout::ChangeSet::from_sqlite(&db_tx)?;
+        //         db_tx.commit()?;
+        //         Ok(changeset)
+        //     },
+        //     |db, changeset| {
+        //         let db_tx = db.transaction()?;
+        //         changeset.persist_to_sqlite(&db_tx)?;
+        //         Ok(db_tx.commit()?)
+        //     },
+        // );
+
+        persist_indexer_changeset(
+            "wallet.redb",
+            |path| {
+                let db = redb::Database::create(path)?;
+                Ok(Store::new(Arc::new(db), "wallet".to_string())?)
+            },
+            |db| {
+                db.create_tables::<ConfirmationBlockTime>()?;
+                let mut changeset = keychain_txout::ChangeSet::default();
+                db.read_indexer(&mut changeset)?;
+                Ok(changeset)
+            },
+            |db, changeset| {
+                db.persist_indexer(changeset)?;
+                Ok(())
+            },
+        );
+    }
+
+    #[test]
+    fn local_chain_is_persisted() {
+        persist_local_chain_changeset(
+            "wallet.redb",
+            |path| {
+                let db = redb::Database::create(path)?;
+                Ok(Store::new(Arc::new(db), "wallet".to_string())?)
+            },
+            |db| {
+                db.create_tables::<ConfirmationBlockTime>()?;
+                let mut changeset = local_chain::ChangeSet::default();
+                db.read_local_chain(&mut changeset)?;
+                Ok(changeset)
+            },
+            |db, changeset| {
+                db.persist_local_chain(changeset)?;
+                Ok(())
+            },
+        );
+    }
+
+    #[cfg(feature = "wallet")]
+    #[test]
+    fn network_is_persisted() {
+        use bdk_wallet::persist_test_utils::persist_network;
+
+        persist_network("wallet.redb", |path| {
+            let db = redb::Database::create(path)?;
+            Ok(Store::new(Arc::new(db), "wallet".to_string())?)
+        });
+    }
+
+    #[cfg(feature = "wallet")]
+    #[test]
+    fn keychains_are_persisted() {
+        use bdk_wallet::persist_test_utils::persist_keychains;
+
+        persist_keychains("wallet.redb", |path| {
+            let db = redb::Database::create(path)?;
+            Ok(Store::new(Arc::new(db), "wallet".to_string())?)
+        });
+    }
+
+    #[cfg(feature = "wallet")]
+    #[test]
+    fn reversed_keychains_are_persisted() {
+        use bdk_wallet::persist_test_utils::persist_keychains_reversed;
+
+        // const DB_MAGIC: &[u8] = &[0x21, 0x24, 0x48];
+        // persist_keychains_reversed::<bdk_wallet::file_store::Store<ChangeSet>, _>(
+        //     "store.db",
+        //     |path| Ok(bdk_wallet::file_store::Store::create(DB_MAGIC, path)?),
+        // );
+
+        // persist_keychains_reversed::<bdk_chain::rusqlite::Connection, _>("store.sqlite", |path| {
+        //     Ok(bdk_chain::rusqlite::Connection::open(path)?)
+        // });
+
+        persist_keychains_reversed("wallet.redb", |path| {
+            let db = redb::Database::create(path)?;
+            Ok(Store::new(Arc::new(db), "wallet".to_string())?)
+        });
+    }
+
+    #[cfg(feature = "wallet")]
+    #[test]
+    fn keychain_is_persisted() {
+        use bdk_wallet::persist_test_utils::persist_single_keychain;
+
+        persist_single_keychain("wallet.redb", |path| {
+            let db = redb::Database::create(path)?;
+            Ok(Store::new(Arc::new(db), "wallet".to_string())?)
+        });
+    }
+
+    #[test]
+    fn last_seen_is_persisted() {
+        persist_last_seen(
+            "wallet.redb",
+            |path| {
+                let db = redb::Database::create(path)?;
+                Ok(Store::new(Arc::new(db), "wallet".to_string())?)
+            },
+            |db| {
+                db.create_tables::<ConfirmationBlockTime>()?;
+                let mut changeset = tx_graph::ChangeSet::<ConfirmationBlockTime>::default();
+                db.read_tx_graph(&mut changeset)?;
+                Ok(changeset)
+            },
+            |db, changeset| {
+                db.persist_tx_graph(changeset)?;
+                Ok(())
+            },
+        );
     }
 }
