@@ -131,23 +131,23 @@ pub struct Store {
 
 impl Store {
     // This table stores (KeychainKind, Descriptor) pairs on a high level.
-    fn keychains_table_defn(&self) -> TableDefinition<u64, String> {
+    fn keychains_table_defn(&self) -> TableDefinition<'_, u64, String> {
         TableDefinition::new(&self.keychain_table_name)
     }
 
     // This table stores (height, BlockHash) pairs on a high level.
-    fn blocks_table_defn(&self) -> TableDefinition<u32, [u8; 32]> {
+    fn blocks_table_defn(&self) -> TableDefinition<'_, u32, [u8; 32]> {
         TableDefinition::new(&self.blocks_table_name)
     }
 
     // This table stores (Txid, Transaction) pairs on a high level.
-    fn txs_table_defn(&self) -> TableDefinition<[u8; 32], Vec<u8>> {
+    fn txs_table_defn(&self) -> TableDefinition<'_, [u8; 32], Vec<u8>> {
         TableDefinition::new(&self.txs_table_name)
     }
 
     // This table stores (Outpoint, TxOut) pairs on a high level.
     // where Outpoint = (Txid, vout) and TxOut = (value, script_pubkey)
-    fn txouts_table_defn(&self) -> TableDefinition<([u8; 32], u32), (u64, Vec<u8>)> {
+    fn txouts_table_defn(&self) -> TableDefinition<'_, ([u8; 32], u32), (u64, Vec<u8>)> {
         TableDefinition::new(&self.txouts_table_name)
     }
 
@@ -158,32 +158,32 @@ impl Store {
     // (in different chains ) and a Block can anchor multiple transactions.
     fn anchors_table_defn<A: AnchorWithMetaData>(
         &self,
-    ) -> TableDefinition<([u8; 32], [u8; 36]), A::MetaDataType> {
+    ) -> TableDefinition<'_, ([u8; 32], [u8; 36]), A::MetaDataType> {
         TableDefinition::new(&self.anchors_table_name)
     }
 
     // This table stores (Txid, last_seen) pairs on a high level.
-    fn last_seen_defn(&self) -> TableDefinition<[u8; 32], u64> {
+    fn last_seen_defn(&self) -> TableDefinition<'_, [u8; 32], u64> {
         TableDefinition::new(&self.last_seen_table_name)
     }
 
     // This table stores (Txid, last_evicted) pairs on a high level.
-    fn last_evicted_table_defn(&self) -> TableDefinition<[u8; 32], u64> {
+    fn last_evicted_table_defn(&self) -> TableDefinition<'_, [u8; 32], u64> {
         TableDefinition::new(&self.last_evicted_table_name)
     }
 
     // This table stores (Txid, first_seen) pairs on a high level.
-    fn first_seen_table_defn(&self) -> TableDefinition<[u8; 32], u64> {
+    fn first_seen_table_defn(&self) -> TableDefinition<'_, [u8; 32], u64> {
         TableDefinition::new(&self.first_seen_table_name)
     }
 
     // This table stores (DescriptorId, last_revealed_index) pairs on a high level.
-    fn last_revealed_table_defn(&self) -> TableDefinition<[u8; 32], u32> {
+    fn last_revealed_table_defn(&self) -> TableDefinition<'_, [u8; 32], u32> {
         TableDefinition::new(&self.last_revealed_table_name)
     }
 
     // This table stores ((DescriptorId, index), ScriptPubKey) pairs on a high level.
-    fn spk_table_defn(&self) -> TableDefinition<([u8; 32], u32), Vec<u8>> {
+    fn spk_table_defn(&self) -> TableDefinition<'_, ([u8; 32], u32), Vec<u8>> {
         TableDefinition::new(&self.spk_table_name)
     }
 
