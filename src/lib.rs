@@ -335,13 +335,12 @@ impl Store {
         changeset: &tx_graph::ChangeSet<A>,
     ) -> Result<(), StoreError> {
         let write_tx = self.db.begin_write()?;
-        let read_tx = self.db.begin_read()?;
         self.persist_txs(&write_tx, &changeset.txs)?;
         self.persist_txouts(&write_tx, &changeset.txouts)?;
-        self.persist_anchors::<A>(&write_tx, &read_tx, &changeset.anchors, &changeset.txs)?;
-        self.persist_last_seen(&write_tx, &read_tx, &changeset.last_seen, &changeset.txs)?;
-        self.persist_last_evicted(&write_tx, &read_tx, &changeset.last_evicted, &changeset.txs)?;
-        self.persist_first_seen(&write_tx, &read_tx, &changeset.first_seen, &changeset.txs)?;
+        self.persist_anchors::<A>(&write_tx, &changeset.anchors)?;
+        self.persist_last_seen(&write_tx, &changeset.last_seen)?;
+        self.persist_last_evicted(&write_tx, &changeset.last_evicted)?;
+        self.persist_first_seen(&write_tx, &changeset.first_seen)?;
         write_tx.commit()?;
         Ok(())
     }
@@ -465,25 +464,15 @@ impl Store {
     fn persist_anchors<A: AnchorWithMetaData>(
         &self,
         write_tx: &WriteTransaction,
-        read_tx: &ReadTransaction,
         anchors: &BTreeSet<(A, Txid)>,
-        txs: &BTreeSet<Arc<Transaction>>,
     ) -> Result<(), StoreError> {
         let mut table = write_tx.open_table(self.anchors_table_defn::<A>())?;
-        let txs_table = read_tx.open_table(self.txs_table_defn())?;
         for (anchor, txid) in anchors {
-            // if the corresponding txn exists in Txs table (trying to imitate the
-            // referential behavior in case of sqlite)
-            let found = txs.iter().any(|tx| tx.compute_txid() == *txid);
-            if txs_table.get(txid.to_byte_array())?.is_some() || found {
-                let mut bytes: [u8; 36] = [0; 36];
-                let anchor_block = anchor.anchor_block();
-                bytes[0..4].copy_from_slice(&anchor_block.height.to_le_bytes());
-                bytes[4..].copy_from_slice(&anchor_block.hash.to_byte_array());
-                table.insert((txid.to_byte_array(), bytes), &anchor.metadata())?;
-            } else {
-                return Err(StoreError::TxMissing(*txid));
-            }
+            let mut bytes: [u8; 36] = [0; 36];
+            let anchor_block = anchor.anchor_block();
+            bytes[0..4].copy_from_slice(&anchor_block.height.to_le_bytes());
+            bytes[4..].copy_from_slice(&anchor_block.hash.to_byte_array());
+            table.insert((txid.to_byte_array(), bytes), &anchor.metadata())?;
         }
         Ok(())
     }
@@ -492,21 +481,11 @@ impl Store {
     fn persist_last_seen(
         &self,
         write_tx: &WriteTransaction,
-        read_tx: &ReadTransaction,
         last_seen: &BTreeMap<Txid, u64>,
-        txs: &BTreeSet<Arc<Transaction>>,
     ) -> Result<(), StoreError> {
         let mut table = write_tx.open_table(self.last_seen_defn())?;
-        let txs_table = read_tx.open_table(self.txs_table_defn())?;
         for (txid, last_seen_time) in last_seen {
-            // if the corresponding txn exists in Txs table (trying to duplicate the
-            // referential behavior in case of sqlite)
-            let found = txs.iter().any(|tx| tx.compute_txid() == *txid);
-            if txs_table.get(txid.to_byte_array())?.is_some() || found {
-                table.insert(txid.to_byte_array(), *last_seen_time)?;
-            } else {
-                return Err(StoreError::TxMissing(*txid));
-            }
+            table.insert(txid.to_byte_array(), *last_seen_time)?;
         }
         Ok(())
     }
@@ -515,21 +494,11 @@ impl Store {
     fn persist_last_evicted(
         &self,
         write_tx: &WriteTransaction,
-        read_tx: &ReadTransaction,
         last_evicted: &BTreeMap<Txid, u64>,
-        txs: &BTreeSet<Arc<Transaction>>,
     ) -> Result<(), StoreError> {
         let mut table = write_tx.open_table(self.last_evicted_table_defn())?;
-        let txs_table = read_tx.open_table(self.txs_table_defn())?;
         for (txid, last_evicted_time) in last_evicted {
-            // if the corresponding txn exists in Txs table (trying to duplicate the
-            // referential behavior in case of sqlite)
-            let found = txs.iter().any(|tx| tx.compute_txid() == *txid);
-            if txs_table.get(txid.to_byte_array())?.is_some() || found {
-                table.insert(txid.to_byte_array(), last_evicted_time)?;
-            } else {
-                return Err(StoreError::TxMissing(*txid));
-            }
+            table.insert(txid.to_byte_array(), last_evicted_time)?;
         }
         Ok(())
     }
@@ -538,21 +507,11 @@ impl Store {
     fn persist_first_seen(
         &self,
         write_tx: &WriteTransaction,
-        read_tx: &ReadTransaction,
         first_seen: &BTreeMap<Txid, u64>,
-        txs: &BTreeSet<Arc<Transaction>>,
     ) -> Result<(), StoreError> {
         let mut table = write_tx.open_table(self.first_seen_table_defn())?;
-        let txs_table = read_tx.open_table(self.txs_table_defn())?;
         for (txid, first_seen_time) in first_seen {
-            // if the corresponding txn exists in Txs table (trying to duplicate the
-            // referential behavior in case of sqlite)
-            let found = txs.iter().any(|tx| tx.compute_txid() == *txid);
-            if txs_table.get(txid.to_byte_array())?.is_some() || found {
-                table.insert(txid.to_byte_array(), first_seen_time)?;
-            } else {
-                return Err(StoreError::TxMissing(*txid));
-            }
+            table.insert(txid.to_byte_array(), first_seen_time)?;
         }
         Ok(())
     }
@@ -1106,27 +1065,15 @@ mod test {
         let tx3 = Arc::new(create_one_inp_one_out_tx(tx2.compute_txid(), 19_000));
 
         // try persisting and reading last_seen
-        let txs: BTreeSet<Arc<Transaction>> = [tx1.clone(), tx2.clone()].into();
         let mut last_seen: BTreeMap<Txid, u64> =
             [(tx1.compute_txid(), 100), (tx2.compute_txid(), 120)].into();
 
         let write_tx = store.db.begin_write().unwrap();
-        let _ = write_tx.open_table(store.txs_table_defn()).unwrap();
         let _ = write_tx.open_table(store.last_seen_defn()).unwrap();
         write_tx.commit().unwrap();
 
         let write_tx = store.db.begin_write().unwrap();
-        store.persist_txs(&write_tx, &txs).unwrap();
-        write_tx.commit().unwrap();
-
-        // to hit the branch for the case when tx is persisted but not in changeset
-        let txs: BTreeSet<Arc<Transaction>> = BTreeSet::new();
-
-        let write_tx = store.db.begin_write().unwrap();
-        let read_tx = store.db.begin_read().unwrap();
-        store
-            .persist_last_seen(&write_tx, &read_tx, &last_seen, &txs)
-            .unwrap();
+        store.persist_last_seen(&write_tx, &last_seen).unwrap();
         write_tx.commit().unwrap();
 
         let read_tx = store.db.begin_read().unwrap();
@@ -1135,19 +1082,10 @@ mod test {
         assert_eq!(last_seen_read, last_seen);
 
         // persist another last_seen and see if what is read is same as merged one
-        let txs_new: BTreeSet<Arc<Transaction>> = [tx3.clone()].into();
         let last_seen_new: BTreeMap<Txid, u64> = [(tx3.compute_txid(), 200)].into();
 
         let write_tx = store.db.begin_write().unwrap();
-        let _ = write_tx.open_table(store.txs_table_defn()).unwrap();
-        let _ = write_tx.open_table(store.last_seen_defn()).unwrap();
-        write_tx.commit().unwrap();
-
-        let write_tx = store.db.begin_write().unwrap();
-        let read_tx = store.db.begin_read().unwrap();
-        store
-            .persist_last_seen(&write_tx, &read_tx, &last_seen_new, &txs_new)
-            .unwrap();
+        store.persist_last_seen(&write_tx, &last_seen_new).unwrap();
         write_tx.commit().unwrap();
 
         let read_tx = store.db.begin_read().unwrap();
@@ -1161,39 +1099,24 @@ mod test {
 
     #[test]
     fn test_last_seen_missing_txn() {
-        // to hit the branch for the panic case in persist_last_seen
         let tmpfile = NamedTempFile::new().unwrap();
         let db = create_db(tmpfile.path());
         let store = create_test_store(Arc::new(db), "wallet1");
 
-        let tx1 = Arc::new(create_one_inp_one_out_tx(
-            Txid::from_byte_array([0; 32]),
-            30_000,
-        ));
-        let tx2 = Arc::new(create_one_inp_one_out_tx(tx1.compute_txid(), 20_000));
-
-        let last_seen: BTreeMap<Txid, u64> = [
-            (hash!("B"), 100),
-            (tx1.compute_txid(), 120),
-            (tx2.compute_txid(), 121),
-        ]
-        .into();
+        let last_seen: BTreeMap<Txid, u64> = [(hash!("B"), 100)].into();
 
         let write_tx = store.db.begin_write().unwrap();
-        let _ = write_tx.open_table(store.txs_table_defn()).unwrap();
         let _ = write_tx.open_table(store.last_seen_defn()).unwrap();
         write_tx.commit().unwrap();
 
-        let txs: BTreeSet<Arc<Transaction>> = [tx1, tx2].into();
-
         let write_tx = store.db.begin_write().unwrap();
-        let read_tx = store.db.begin_read().unwrap();
-        match store.persist_last_seen(&write_tx, &read_tx, &last_seen, &txs) {
-            Ok(_) => panic!("should give error since tx missing"),
-            Err(StoreError::TxMissing(txid)) => assert_eq!(txid, hash!("B")),
-            Err(_) => panic!("error should only be due to missing tx"),
-        }
+        store.persist_last_seen(&write_tx, &last_seen).unwrap();
         write_tx.commit().unwrap();
+
+        let read_tx = store.db.begin_read().unwrap();
+        let mut last_seen_read = BTreeMap::new();
+        store.read_last_seen(&read_tx, &mut last_seen_read).unwrap();
+        assert_eq!(last_seen, last_seen_read);
     }
 
     #[test]
@@ -1209,28 +1132,18 @@ mod test {
         let tx2 = Arc::new(create_one_inp_one_out_tx(tx1.compute_txid(), 20_000));
         let tx3 = Arc::new(create_one_inp_one_out_tx(tx2.compute_txid(), 19_000));
 
-        let txs: BTreeSet<Arc<Transaction>> = [tx1.clone(), tx2.clone()].into();
         let mut last_evicted: BTreeMap<Txid, u64> =
             [(tx1.compute_txid(), 100), (tx2.compute_txid(), 120)].into();
 
         let write_tx = store.db.begin_write().unwrap();
-        let _ = write_tx.open_table(store.txs_table_defn()).unwrap();
         let _ = write_tx
             .open_table(store.last_evicted_table_defn())
             .unwrap();
         write_tx.commit().unwrap();
 
         let write_tx = store.db.begin_write().unwrap();
-        store.persist_txs(&write_tx, &txs).unwrap();
-        write_tx.commit().unwrap();
-
-        // to hit the branch for the case when tx is persisted but not in changeset
-        let txs: BTreeSet<Arc<Transaction>> = BTreeSet::new();
-
-        let write_tx = store.db.begin_write().unwrap();
-        let read_tx = store.db.begin_read().unwrap();
         store
-            .persist_last_evicted(&write_tx, &read_tx, &last_evicted, &txs)
+            .persist_last_evicted(&write_tx, &last_evicted)
             .unwrap();
         write_tx.commit().unwrap();
 
@@ -1241,20 +1154,11 @@ mod test {
             .unwrap();
         assert_eq!(last_evicted_read, last_evicted);
 
-        let txs_new: BTreeSet<Arc<Transaction>> = [tx3.clone()].into();
         let last_evicted_new: BTreeMap<Txid, u64> = [(tx3.compute_txid(), 300)].into();
 
         let write_tx = store.db.begin_write().unwrap();
-        let _ = write_tx.open_table(store.txs_table_defn()).unwrap();
-        let _ = write_tx
-            .open_table(store.last_evicted_table_defn())
-            .unwrap();
-        write_tx.commit().unwrap();
-
-        let write_tx = store.db.begin_write().unwrap();
-        let read_tx = store.db.begin_read().unwrap();
         store
-            .persist_last_evicted(&write_tx, &read_tx, &last_evicted_new, &txs_new)
+            .persist_last_evicted(&write_tx, &last_evicted_new)
             .unwrap();
         write_tx.commit().unwrap();
 
@@ -1269,41 +1173,30 @@ mod test {
 
     #[test]
     fn test_last_evicted_missing_txs() {
-        // to hit the branch for the panic case in persist_last_evicted
         let tmpfile = NamedTempFile::new().unwrap();
         let db = create_db(tmpfile.path());
         let store = create_test_store(Arc::new(db), "wallet1");
 
-        let tx1 = Arc::new(create_one_inp_one_out_tx(
-            Txid::from_byte_array([0; 32]),
-            30_000,
-        ));
-        let tx2 = Arc::new(create_one_inp_one_out_tx(tx1.compute_txid(), 20_000));
-
-        let last_evicted: BTreeMap<Txid, u64> = [
-            (hash!("B"), 100),
-            (tx1.compute_txid(), 120),
-            (tx2.compute_txid(), 132),
-        ]
-        .into();
+        let last_evicted: BTreeMap<Txid, u64> = [(hash!("B"), 100)].into();
 
         let write_tx = store.db.begin_write().unwrap();
-        let _ = write_tx.open_table(store.txs_table_defn()).unwrap();
         let _ = write_tx
             .open_table(store.last_evicted_table_defn())
             .unwrap();
         write_tx.commit().unwrap();
 
-        let txs: BTreeSet<Arc<Transaction>> = [tx1, tx2].into();
-
         let write_tx = store.db.begin_write().unwrap();
-        let read_tx = store.db.begin_read().unwrap();
-        match store.persist_last_evicted(&write_tx, &read_tx, &last_evicted, &txs) {
-            Ok(_) => panic!("should give error since tx missing"),
-            Err(StoreError::TxMissing(txid)) => assert_eq!(txid, hash!("B")),
-            Err(_) => panic!("error should only be due to missing tx"),
-        }
+        store
+            .persist_last_evicted(&write_tx, &last_evicted)
+            .unwrap();
         write_tx.commit().unwrap();
+
+        let read_tx = store.db.begin_read().unwrap();
+        let mut last_evicted_read = BTreeMap::new();
+        store
+            .read_last_evicted(&read_tx, &mut last_evicted_read)
+            .unwrap();
+        assert_eq!(last_evicted, last_evicted_read)
     }
 
     #[test]
@@ -1319,27 +1212,15 @@ mod test {
         let tx2 = Arc::new(create_one_inp_one_out_tx(tx1.compute_txid(), 20_000));
         let tx3 = Arc::new(create_one_inp_one_out_tx(tx2.compute_txid(), 19_000));
 
-        let txs: BTreeSet<Arc<Transaction>> = [tx1.clone(), tx2.clone()].into();
         let mut first_seen: BTreeMap<Txid, u64> =
             [(tx1.compute_txid(), 100), (tx2.compute_txid(), 120)].into();
 
         let write_tx = store.db.begin_write().unwrap();
-        let _ = write_tx.open_table(store.txs_table_defn()).unwrap();
         let _ = write_tx.open_table(store.first_seen_table_defn()).unwrap();
         write_tx.commit().unwrap();
 
         let write_tx = store.db.begin_write().unwrap();
-        store.persist_txs(&write_tx, &txs).unwrap();
-        write_tx.commit().unwrap();
-
-        // to hit the branch for the case when tx is persisted but not in changeset
-        let txs: BTreeSet<Arc<Transaction>> = BTreeSet::new();
-
-        let write_tx = store.db.begin_write().unwrap();
-        let read_tx = store.db.begin_read().unwrap();
-        store
-            .persist_first_seen(&write_tx, &read_tx, &first_seen, &txs)
-            .unwrap();
+        store.persist_first_seen(&write_tx, &first_seen).unwrap();
         write_tx.commit().unwrap();
 
         let read_tx = store.db.begin_read().unwrap();
@@ -1349,18 +1230,11 @@ mod test {
             .unwrap();
         assert_eq!(first_seen_read, first_seen);
 
-        let txs_new: BTreeSet<Arc<Transaction>> = [tx3.clone()].into();
         let first_seen_new: BTreeMap<Txid, u64> = [(tx3.compute_txid(), 200)].into();
 
         let write_tx = store.db.begin_write().unwrap();
-        let _ = write_tx.open_table(store.txs_table_defn()).unwrap();
-        let _ = write_tx.open_table(store.first_seen_table_defn()).unwrap();
-        write_tx.commit().unwrap();
-
-        let write_tx = store.db.begin_write().unwrap();
-        let read_tx = store.db.begin_read().unwrap();
         store
-            .persist_first_seen(&write_tx, &read_tx, &first_seen_new, &txs_new)
+            .persist_first_seen(&write_tx, &first_seen_new)
             .unwrap();
         write_tx.commit().unwrap();
 
@@ -1375,39 +1249,26 @@ mod test {
 
     #[test]
     fn test_first_seen_missing_tx() {
-        // to hit the branch for the panic case persist_first_seen
         let tmpfile = NamedTempFile::new().unwrap();
         let db = create_db(tmpfile.path());
         let store = create_test_store(Arc::new(db), "wallet1");
 
-        let tx1 = Arc::new(create_one_inp_one_out_tx(
-            Txid::from_byte_array([0; 32]),
-            30_000,
-        ));
-        let tx2 = Arc::new(create_one_inp_one_out_tx(tx1.compute_txid(), 20_000));
-
-        let first_seen: BTreeMap<Txid, u64> = [
-            (hash!("B"), 100),
-            (tx1.compute_txid(), 120),
-            (tx2.compute_txid(), 121),
-        ]
-        .into();
+        let first_seen: BTreeMap<Txid, u64> = [(hash!("B"), 100)].into();
 
         let write_tx = store.db.begin_write().unwrap();
-        let _ = write_tx.open_table(store.txs_table_defn()).unwrap();
         let _ = write_tx.open_table(store.first_seen_table_defn()).unwrap();
         write_tx.commit().unwrap();
 
-        let txs: BTreeSet<Arc<Transaction>> = [tx1, tx2].into();
-
         let write_tx = store.db.begin_write().unwrap();
-        let read_tx = store.db.begin_read().unwrap();
-        match store.persist_first_seen(&write_tx, &read_tx, &first_seen, &txs) {
-            Ok(_) => panic!("should give error since tx missing"),
-            Err(StoreError::TxMissing(txid)) => assert_eq!(txid, hash!("B")),
-            Err(_) => panic!("error should only be due to missing tx"),
-        }
+        store.persist_first_seen(&write_tx, &first_seen).unwrap();
         write_tx.commit().unwrap();
+
+        let read_tx = store.db.begin_read().unwrap();
+        let mut first_seen_read = BTreeMap::new();
+        store
+            .read_first_seen(&read_tx, &mut first_seen_read)
+            .unwrap();
+        assert_eq!(first_seen, first_seen_read);
     }
 
     #[test]
@@ -1527,29 +1388,16 @@ mod test {
             confirmation_time: 1756839600,
         };
 
-        let txs: BTreeSet<Arc<Transaction>> = [tx1.clone(), tx2.clone()].into();
         let mut anchors = [(anchor1, tx1.compute_txid()), (anchor2, tx2.compute_txid())].into();
 
         let write_tx = store.db.begin_write().unwrap();
-        let _ = write_tx.open_table(store.txs_table_defn()).unwrap();
         let _ = write_tx
             .open_table(store.anchors_table_defn::<ConfirmationBlockTime>())
             .unwrap();
         write_tx.commit().unwrap();
 
         let write_tx = store.db.begin_write().unwrap();
-        store.persist_txs(&write_tx, &txs).unwrap();
-        write_tx.commit().unwrap();
-
-        // to hit the branch for the case when tx is persisted but not in changeset
-        let txs: BTreeSet<Arc<Transaction>> = BTreeSet::new();
-
-        let write_tx = store.db.begin_write().unwrap();
-        let read_tx = store.db.begin_read().unwrap();
-        store
-            .persist_anchors(&write_tx, &read_tx, &anchors, &txs)
-            .unwrap();
-        read_tx.close().unwrap();
+        store.persist_anchors(&write_tx, &anchors).unwrap();
         write_tx.commit().unwrap();
 
         let read_tx = store.db.begin_read().unwrap();
@@ -1557,43 +1405,11 @@ mod test {
         store.read_anchors(&read_tx, &mut anchors_read).unwrap();
         assert_eq!(anchors_read, anchors);
 
-        let txs_new: BTreeSet<Arc<Transaction>> = [tx3.clone()].into();
         let anchors_new: BTreeSet<(ConfirmationBlockTime, Txid)> =
             [(anchor2, tx3.compute_txid())].into();
 
         let write_tx = store.db.begin_write().unwrap();
-        let read_tx = store.db.begin_read().unwrap();
-        store
-            .persist_anchors(&write_tx, &read_tx, &anchors_new, &txs_new)
-            .unwrap();
-        read_tx.close().unwrap();
-        write_tx.commit().unwrap();
-
-        let read_tx = store.db.begin_read().unwrap();
-        let mut anchors_read_new: BTreeSet<(ConfirmationBlockTime, Txid)> = BTreeSet::new();
-        store.read_anchors(&read_tx, &mut anchors_read_new).unwrap();
-
-        anchors.merge(anchors_new);
-        assert_eq!(anchors_read_new, anchors);
-
-        // to hit the branch for the case when tx is persisted and is also in changeset (can this
-        // happen though?)
-        let tx4 = Arc::new(create_one_inp_one_out_tx(tx3.compute_txid(), 14_000));
-
-        let txs_new: BTreeSet<Arc<Transaction>> = [tx4.clone()].into();
-        let anchors_new: BTreeSet<(ConfirmationBlockTime, Txid)> =
-            [(anchor2, tx4.compute_txid())].into();
-
-        let write_tx = store.db.begin_write().unwrap();
-        store.persist_txs(&write_tx, &txs_new).unwrap();
-        write_tx.commit().unwrap();
-
-        let write_tx = store.db.begin_write().unwrap();
-        let read_tx = store.db.begin_read().unwrap();
-        store
-            .persist_anchors(&write_tx, &read_tx, &anchors_new, &txs_new)
-            .unwrap();
-        read_tx.close().unwrap();
+        store.persist_anchors(&write_tx, &anchors_new).unwrap();
         write_tx.commit().unwrap();
 
         let read_tx = store.db.begin_read().unwrap();
@@ -1606,7 +1422,6 @@ mod test {
 
     #[test]
     fn test_anchors_missing_tx() {
-        // to hit the branch for the panic case in persist_anchors
         let tmpfile = NamedTempFile::new().unwrap();
         let db = create_db(tmpfile.path());
         let store = create_test_store(Arc::new(db), "wallet1");
@@ -1617,7 +1432,6 @@ mod test {
         };
 
         let write_tx = store.db.begin_write().unwrap();
-        let _ = write_tx.open_table(store.txs_table_defn()).unwrap();
         let _ = write_tx
             .open_table(store.anchors_table_defn::<ConfirmationBlockTime>())
             .unwrap();
@@ -1625,17 +1439,17 @@ mod test {
 
         let anchors_missing_txs: BTreeSet<(ConfirmationBlockTime, Txid)> =
             [(anchor1, hash!("B"))].into();
-        let txs: BTreeSet<Arc<Transaction>> = BTreeSet::new();
 
         let write_tx = store.db.begin_write().unwrap();
-        let read_tx = store.db.begin_read().unwrap();
-        match store.persist_anchors(&write_tx, &read_tx, &anchors_missing_txs, &txs) {
-            Ok(_) => panic!("should give error since tx missing"),
-            Err(StoreError::TxMissing(txid)) => assert_eq!(txid, hash!("B")),
-            Err(_) => panic!("error should only be due to missing tx"),
-        }
-        read_tx.close().unwrap();
+        store
+            .persist_anchors(&write_tx, &anchors_missing_txs)
+            .unwrap();
         write_tx.commit().unwrap();
+
+        let read_tx = store.db.begin_read().unwrap();
+        let mut anchors_read: BTreeSet<(ConfirmationBlockTime, Txid)> = BTreeSet::new();
+        store.read_anchors(&read_tx, &mut anchors_read).unwrap();
+        assert_eq!(anchors_missing_txs, anchors_read);
     }
 
     #[test]
@@ -1655,22 +1469,16 @@ mod test {
 
         let anchor2 = block_id!(25, "BDK");
 
-        let txs: BTreeSet<Arc<Transaction>> = [tx1.clone(), tx2.clone()].into();
         let mut anchors = [(anchor1, tx1.compute_txid()), (anchor2, tx2.compute_txid())].into();
 
         let write_tx = store.db.begin_write().unwrap();
-        let _ = write_tx.open_table(store.txs_table_defn()).unwrap();
         let _ = write_tx
             .open_table(store.anchors_table_defn::<BlockId>())
             .unwrap();
         write_tx.commit().unwrap();
 
         let write_tx = store.db.begin_write().unwrap();
-        let read_tx = store.db.begin_read().unwrap();
-        store
-            .persist_anchors(&write_tx, &read_tx, &anchors, &txs)
-            .unwrap();
-        read_tx.close().unwrap();
+        store.persist_anchors(&write_tx, &anchors).unwrap();
         write_tx.commit().unwrap();
 
         let read_tx = store.db.begin_read().unwrap();
@@ -1678,15 +1486,10 @@ mod test {
         store.read_anchors(&read_tx, &mut anchors_read).unwrap();
         assert_eq!(anchors_read, anchors);
 
-        let txs_new: BTreeSet<Arc<Transaction>> = [tx3.clone()].into();
         let anchors_new: BTreeSet<(BlockId, Txid)> = [(anchor2, tx3.compute_txid())].into();
 
         let write_tx = store.db.begin_write().unwrap();
-        let read_tx = store.db.begin_read().unwrap();
-        store
-            .persist_anchors(&write_tx, &read_tx, &anchors_new, &txs_new)
-            .unwrap();
-        read_tx.close().unwrap();
+        store.persist_anchors(&write_tx, &anchors_new).unwrap();
         write_tx.commit().unwrap();
 
         let read_tx = store.db.begin_read().unwrap();
