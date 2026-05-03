@@ -127,6 +127,7 @@ pub struct Store {
     last_evicted_table_name: String,
     first_seen_table_name: String,
     spk_table_name: String,
+    locked_outpoints_table_name: String,
 }
 
 impl Store {
@@ -187,6 +188,12 @@ impl Store {
         TableDefinition::new(&self.spk_table_name)
     }
 
+    // This table stores (OutPoint, locked) pairs on a high level.
+    // where OutPoint = (Txid, vout) and locked is a boolean
+    fn locked_outpoints_table_defn(&self) -> TableDefinition<'_, ([u8; 32], u32), bool> {
+        TableDefinition::new(&self.locked_outpoints_table_name)
+    }
+
     /// This function creates a brand new [`Store`].
     ///
     /// [`Store`]: crate::Store
@@ -212,6 +219,8 @@ impl Store {
         last_revealed_table_name.push_str("_last_revealed");
         let mut spk_table_name = wallet_name.clone();
         spk_table_name.push_str("_spk");
+        let mut locked_outpoints_table_name = wallet_name.clone();
+        locked_outpoints_table_name.push_str("_locked_outpoints");
         Ok(Store {
             db,
             wallet_name,
@@ -225,6 +234,7 @@ impl Store {
             first_seen_table_name,
             last_revealed_table_name,
             spk_table_name,
+            locked_outpoints_table_name,
         })
     }
 
@@ -237,6 +247,7 @@ impl Store {
 
         let _ = write_tx.open_table(NETWORK)?;
         let _ = write_tx.open_table(self.keychains_table_defn())?;
+        let _ = write_tx.open_table(self.locked_outpoints_table_defn())?;
         write_tx.commit()?;
 
         self.create_local_chain_tables()?;
@@ -323,6 +334,7 @@ impl Store {
         self.persist_local_chain(&changeset.local_chain)?;
         self.persist_indexer(&changeset.indexer)?;
         self.persist_tx_graph::<ConfirmationBlockTime>(&changeset.tx_graph)?;
+        self.persist_locked_outpoints(&changeset.locked_outpoints)?;
         Ok(())
     }
 
@@ -353,6 +365,28 @@ impl Store {
         let write_tx = self.db.begin_write()?;
         self.persist_last_revealed(&write_tx, &changeset.last_revealed)?;
         self.persist_spks(&write_tx, &changeset.spk_cache)?;
+        write_tx.commit()?;
+        Ok(())
+    }
+
+    #[cfg(feature = "wallet")]
+    /// This function persists the locked outpoints into our db.
+    pub fn persist_locked_outpoints(
+        &self,
+        changeset: &bdk_wallet::locked_outpoints::ChangeSet,
+    ) -> Result<(), StoreError> {
+        let write_tx = self.db.begin_write()?;
+        {
+            let mut table = write_tx.open_table(self.locked_outpoints_table_defn())?;
+            for (outpoint, locked) in &changeset.outpoints {
+                if *locked {
+                    table.insert((outpoint.txid.to_byte_array(), outpoint.vout), locked)?;
+                } else {
+                    // remove the outpoint if locked is false
+                    table.remove((outpoint.txid.to_byte_array(), outpoint.vout))?;
+                }
+            }
+        }
         write_tx.commit()?;
         Ok(())
     }
@@ -564,6 +598,7 @@ impl Store {
         self.read_local_chain(&mut changeset.local_chain)?;
         self.read_tx_graph::<ConfirmationBlockTime>(&mut changeset.tx_graph)?;
         self.read_indexer(&mut changeset.indexer)?;
+        self.read_locked_outpoints_changeset(&mut changeset.locked_outpoints)?;
 
         Ok(())
     }
@@ -597,6 +632,17 @@ impl Store {
         let read_tx = self.db.begin_read()?;
         self.read_last_revealed(&read_tx, &mut changeset.last_revealed)?;
         self.read_spks(&read_tx, &mut changeset.spk_cache)?;
+        Ok(())
+    }
+
+    #[cfg(feature = "wallet")]
+    /// This function loads the locked outpoints from our db.
+    pub fn read_locked_outpoints_changeset(
+        &self,
+        changeset: &mut bdk_wallet::locked_outpoints::ChangeSet,
+    ) -> Result<(), StoreError> {
+        let read_tx = self.db.begin_read()?;
+        self.read_locked_outpoints(&read_tx, &mut changeset.outpoints)?;
         Ok(())
     }
 
@@ -812,6 +858,28 @@ impl Store {
                 .entry(DescriptorId::from_byte_array(desc.value().0))
                 .or_default()
                 .insert(desc.value().1, ScriptBuf::from_bytes(spk.value()));
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "wallet")]
+    // This function loads locked_outpoints corresponding to the wallet.
+    fn read_locked_outpoints(
+        &self,
+        read_tx: &ReadTransaction,
+        outpoints: &mut BTreeMap<OutPoint, bool>,
+    ) -> Result<(), StoreError> {
+        let table = read_tx.open_table(self.locked_outpoints_table_defn())?;
+
+        for entry in table.iter()? {
+            let (outpoint, locked) = entry?;
+            outpoints.insert(
+                OutPoint {
+                    txid: Txid::from_byte_array(outpoint.value().0),
+                    vout: outpoint.value().1,
+                },
+                locked.value(),
+            );
         }
         Ok(())
     }
@@ -1093,7 +1161,7 @@ mod test {
         store
             .read_last_seen(&read_tx, &mut last_seen_read_new)
             .unwrap();
-        last_seen.merge(last_seen_new);
+        Merge::merge(&mut last_seen, last_seen_new);
         assert_eq!(last_seen_read_new, last_seen);
     }
 
@@ -1167,7 +1235,7 @@ mod test {
         store
             .read_last_evicted(&read_tx, &mut last_evicted_read_new)
             .unwrap();
-        last_evicted.merge(last_evicted_new);
+        Merge::merge(&mut last_evicted, last_evicted_new);
         assert_eq!(last_evicted_read_new, last_evicted);
     }
 
@@ -1243,7 +1311,7 @@ mod test {
         store
             .read_first_seen(&read_tx, &mut first_seen_read_new)
             .unwrap();
-        first_seen.merge(first_seen_new);
+        Merge::merge(&mut first_seen, first_seen_new);
         assert_eq!(first_seen_read_new, first_seen);
     }
 
@@ -1322,7 +1390,7 @@ mod test {
         let mut txouts_read_new: BTreeMap<OutPoint, TxOut> = BTreeMap::new();
         store.read_txouts(&read_tx, &mut txouts_read_new).unwrap();
 
-        txouts.merge(txouts_new);
+        Merge::merge(&mut txouts, txouts_new);
         assert_eq!(txouts, txouts_read_new);
     }
 
@@ -1611,7 +1679,7 @@ mod test {
             .read_last_revealed(&read_tx, &mut last_revealed_read_new)
             .unwrap();
 
-        last_revealed.merge(last_revealed_new);
+        Merge::merge(&mut last_revealed, last_revealed_new);
 
         assert_eq!(last_revealed, last_revealed_read_new);
     }
@@ -1746,6 +1814,8 @@ mod test {
     #[cfg(feature = "wallet")]
     #[test]
     fn test_persist_wallet() {
+        use bdk_wallet::locked_outpoints;
+
         let tmpfile = NamedTempFile::new().unwrap();
         let db = Arc::new(create_db(tmpfile.path()));
         let store = create_test_store(db, "wallet1");
@@ -1804,6 +1874,10 @@ mod test {
             .into(),
         };
 
+        let locked_outpoints_changeset = locked_outpoints::ChangeSet {
+            outpoints: [(OutPoint::new(tx1.compute_txid(), 0), true)].into(),
+        };
+
         let mut changeset = ChangeSet {
             descriptor: Some(descriptor.clone()),
             change_descriptor: Some(change_descriptor.clone()),
@@ -1811,6 +1885,7 @@ mod test {
             local_chain: local_chain_changeset,
             tx_graph: tx_graph_changeset,
             indexer: keychain_txout_changeset,
+            locked_outpoints: locked_outpoints_changeset,
         };
 
         store.create_tables::<ConfirmationBlockTime>().unwrap();
@@ -1855,6 +1930,10 @@ mod test {
             .into(),
         };
 
+        let locked_outpoints_changeset = locked_outpoints::ChangeSet {
+            outpoints: [(OutPoint::new(tx2.compute_txid(), 0), true)].into(),
+        };
+
         let changeset_new = ChangeSet {
             descriptor: Some(descriptor),
             change_descriptor: Some(change_descriptor),
@@ -1862,6 +1941,7 @@ mod test {
             local_chain: local_chain_changeset,
             tx_graph: tx_graph_changeset,
             indexer: keychain_txout_changeset,
+            locked_outpoints: locked_outpoints_changeset,
         };
 
         store.persist_wallet(&changeset_new).unwrap();
