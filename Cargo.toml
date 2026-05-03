@@ -1,6 +1,6 @@
 [package]
 name = "bdk_redb"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 description = "Persistence backend for bdk using redb"
@@ -9,8 +9,8 @@ readme = "README.md"
 rust-version = "1.85.0"
 
 [dependencies]
-bdk_wallet = {version = "2.0.0", optional = true}
-bdk_chain = {version = "0.23.0", features = ["serde"]}
+bdk_wallet = {version = "3", optional = true}
+bdk_chain = {version = "0.23", features = ["serde"]}
 ciborium = "0.2.2"
 redb = "2.5.0"
 thiserror = "2.0.12"
