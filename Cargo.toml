@@ -1,6 +1,6 @@
 [package]
 name = "bdk_redb"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 description = "Persistence backend for bdk using redb"
