@@ -1,28 +1,28 @@
 [package]
 name = "bdk_redb"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 description = "Persistence backend for bdk using redb"
 repository = "https://github.com/110CodingP/bdk_redb"
 readme = "README.md"
-rust-version = "1.85.0"
+rust-version = "1.89.0"
 
 [dependencies]
 bdk_wallet = {version = "3", optional = true}
 bdk_chain = {version = "0.23", features = ["serde"]}
 ciborium = "0.2.2"
-redb = "2.5.0"
-thiserror = "2.0.12"
+redb = "4.1"
+thiserror = "2.0"
 
 [features]
 default = ["wallet"]
 wallet = ["bdk_wallet"]
 
 [dev-dependencies]
-anyhow = "1.0.98"
+anyhow = "1.0"
 bdk_testenv = { version = "0.13.0" }
-tempfile = "3.20.0"
+tempfile = "3.20"
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage,coverage_nightly)'] }
