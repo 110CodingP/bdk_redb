@@ -12,10 +12,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! anyhow = "1.0.98"
-//! bdk_redb = "0.1.1"
-//! bdk_wallet = "2.0.0"
-//! tempfile = "3.20.0"
+//! bdk_redb = "0.3.0"
 //! ```
 //!
 //! Now:
@@ -27,6 +24,7 @@
 //!     use bdk_wallet::{KeychainKind, Wallet};
 //!     use std::sync::Arc;
 //!     use tempfile::NamedTempFile;
+//!     use bdk_redb::{redb::Database, Store};
 //!     
 //!     use anyhow::Result;
 //!     
@@ -38,13 +36,12 @@
 //!     fn main() -> Result<()> {
 //!         let network = Network::Signet;
 //!         let file_path = NamedTempFile::new()?;
-//!         let db = Arc::new(bdk_redb::redb::Database::create(file_path.path())?);
-//!         let mut store = bdk_redb::Store::new(db, "wallet1".to_string())?;
+//!         let db = Arc::new(Database::create(file_path.path())?);
+//!         let mut store = Store::new(db, "wallet1".to_string())?;
 //!     
 //!         let wallet_opt = Wallet::load()
 //!             .descriptor(KeychainKind::External, Some(EXTERNAL_DESCRIPTOR))
 //!             .descriptor(KeychainKind::Internal, Some(INTERNAL_DESCRIPTOR))
-//!             .extract_keys()
 //!             .check_network(network)
 //!             .load_wallet(&mut store)?;
 //!     
@@ -88,7 +85,9 @@ use bdk_chain::{BlockId, DescriptorId, keychain_txout, local_chain, tx_graph};
 #[cfg(feature = "wallet")]
 use bdk_wallet::{ChangeSet, WalletPersister};
 use error::StoreError;
-use redb::{Database, ReadTransaction, ReadableTable, TableDefinition, WriteTransaction};
+use redb::{
+    Database, ReadTransaction, ReadableDatabase, ReadableTable, TableDefinition, WriteTransaction,
+};
 use std::collections::{BTreeMap, BTreeSet};
 use std::str::FromStr;
 use std::sync::Arc;

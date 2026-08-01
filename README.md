@@ -1,7 +1,7 @@
 # bdk_redb
 
 [![Crate Info](https://img.shields.io/crates/v/bdk_redb.svg)](https://crates.io/crates/bdk_redb)
-[![Rustc Version 1.85.0+](https://img.shields.io/badge/rustc-1.85.0%2B-yellow.svg)](https://blog.rust-lang.org/2025/02/20/Rust-1.85.0.html)
+![Rustc Version](https://img.shields.io/crates/msrv/bdk_redb)
 [![Wallet API Docs](https://img.shields.io/badge/docs.rs-bdk_redb-green)](https://docs.rs/bdk_redb)
 [![Coverage Status](https://coveralls.io/repos/github/110CodingP/bdk_redb/badge.svg)](https://coveralls.io/github/110CodingP/bdk_redb)
 [![CI Status](https://github.com/110CodingP/bdk_redb/workflows/CI/badge.svg)](https://github.com/110CodingP/bdk_redb/actions?query=workflow:CI)
@@ -24,7 +24,7 @@ There is currently one published crate in this repository:
 The crate has a default feature called `wallet` which provides methods on [`Store`](./src/lib.rs) to persist [`bdk_wallet::ChangeSet`](http://docs.rs/bdk_wallet/2.0.0/bdk_wallet/struct.ChangeSet.html) and [`bdk_wallet::WalletPersister`](https://docs.rs/bdk_wallet/2.0.0/bdk_wallet/trait.WalletPersister.html) implementation for [`Store`](./src/lib.rs).
 
 ## Minimum Supported Rust Version (MSRV)
-The library maintains a MSRV of 1.85.0 due to dependency on [`redb`](https://crates.io/crates/redb). 
+The library maintains a MSRV of 1.89.0 due to dependency on [`redb`](https://crates.io/crates/redb). 
 
 ## License
 
