@@ -26,6 +26,32 @@ The crate has a default feature called `wallet` which provides methods on [`Stor
 ## Minimum Supported Rust Version (MSRV)
 The library maintains a MSRV of 1.89.0 due to dependency on [`redb`](https://crates.io/crates/redb). 
 
+## Contributing
+
+The `bdk_redb` project operates an open contributor model where anyone is welcome to contribute towards development in the form of peer review, documentation, testing, and patches.
+
+### Contribution Workflow
+
+1. **Fork & Branch**: Fork the repository and create a dedicated topic branch for your feature or fix.
+2. **Commits**: Ensure commits are atomic, self-contained, and easy to review.
+3. **Testing & Documentation**: Ensure new features are covered by tests and public APIs are documented.
+
+### First-Time Contributors
+
+Please avoid submitting pull requests solely for fixing spelling mistakes, typos, or renaming items, as these will not be prioritized by the maintainers. First-time contributors are encouraged to tackle more substantial tasks such as resolving open issues, adding functional tests, or enhancing documentation.
+
+### Using `justfile`
+
+We use [`just`](https://github.com/casey/just) to streamline development commands. Key shortcuts include:
+
+- `just b`: Build the project with all features.
+- `just c`: Run code checks (formatting, compilation, clippy, commit signature).
+- `just f`: Format code with `cargo +nightly fmt`.
+- `just t`: Run tests across some feature configurations.
+- `just p`: Run the pre-push check suite (`fmt`, `check`, `test`).
+
+Please run `just p` before submitting a pull request.
+
 ## License
 
 Licensed under either of
