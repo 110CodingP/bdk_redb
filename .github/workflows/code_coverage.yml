@@ -1,43 +1,51 @@
-on: [push, pull_request]
-
 name: Code Coverage
 
-permissions: {}
+# Generates code coverage reports using cargo-llvm-cov and uploads results to Codecov.
+# Runs on every push and pull request to track test coverage metrics.
+# Uploads coverage data to Codecov for tracking and produces an HTML report artifact for download.
+
+on: [push, pull_request]
+
+permissions:
+  contents: read
+  pull-requests: write
 
 jobs:
-  Codecov:
+  Coverage:
     name: Code Coverage
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - name: Install lcov tools
-        run: sudo apt-get install lcov -y
       - name: Install Rust toolchain
-        uses: actions-rs/toolchain@v1
+        uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-            toolchain: nightly
-            override: true
-            profile: minimal
-            components: llvm-tools-preview
-      - name: Rust Cache
-        uses: Swatinem/rust-cache@v2.7.8
+          toolchain: nightly
+          components: llvm-tools-preview
+          cache: true
       - name: Install cargo-llvm-cov
         run: if [[ ! -e ~/.cargo/bin/cargo-llvm-cov ]]; then cargo install cargo-llvm-cov; fi
-      - name: Make coverage directory
-        run: mkdir coverage
-      - name: Test and report coverage
-        run: cargo +nightly llvm-cov -q --doctests --branch --all-features --lcov --output-path ./coverage/lcov.info
+      - name: Generate coverage data
+        run: cargo llvm-cov --all-features --branch --quiet --lcov --output-path lcov.info
+        env:
+          RUSTFLAGS: "--cfg coverage_nightly"
       - name: Generate HTML coverage report
-        run: genhtml -o coverage-report.html --ignore-errors unmapped ./coverage/lcov.info
-      - name: Coveralls upload
-        uses: coverallsapp/github-action@master
+        run: cargo llvm-cov --all-features --branch --quiet  --html
+        env:
+          RUSTFLAGS: "--cfg coverage_nightly"
+      - name: Codecov upload
+        uses: codecov/codecov-action@57e3a136b779b570ffcdbf80b3bdc90e7fab3de2 # v6.0.0
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          files: ./lcov.info
+          flags: rust
+          name: codecov-bdk-redb
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-report
-          path: coverage-report.html
+          path: target/llvm-cov/html

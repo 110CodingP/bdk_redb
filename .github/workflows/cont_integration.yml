@@ -1,58 +1,73 @@
 on: [push, pull_request]
 
+# Main continuous integration workflow that runs build, test, and code quality checks.
+# Runs on every push and pull request, testing against both MSRV and stable Rust.
+# Includes formatting validation, and clippy linting.
+
 name: CI
 
 permissions: {}
 
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
-
-  prepare:
-    runs-on: ubuntu-latest
-    outputs:
-      rust_version: ${{ steps.read_toolchain.outputs.rust_version }}
-    steps:
-      - name: "Checkout repo"
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - name: "Read rust version"
-        id: read_toolchain
-        run: echo "rust_version=$(cat rust-version)" >> $GITHUB_OUTPUT
-
-  build-test:
-    needs: prepare
-    name: Build & Test
+  build-test-msrv:
+    name: Build & Test MSRV
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         os:
           - ubuntu-latest
           - ubuntu-24.04-arm
-        rust:
-          - version: ${{ needs.prepare.outputs.rust_version }}
-            clippy: true
-          - version: 1.89.0 # Overall MSRV
         features:
           - --no-default-features
           - --all-features
     steps:
-      - name: checkout
-        uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
+      - name: Read MSRV
+        id: msrv
+        uses: actions-rust-lang/msrv@b95a3a81b0efee6438b858b41a84aff627e01351 #v0.1.1
+      # The 'toolchain' argument on this action overrides the Rust compiler version set in rust-toolchain.toml
+      # in order to test our MSRV.
       - name: Install Rust toolchain
-        uses: actions-rs/toolchain@v1
+        uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-            toolchain: ${{ matrix.rust.version }}
-            override: true
-            profile: minimal
-      - name: Rust Cache
-        uses: Swatinem/rust-cache@v2.7.8
+          toolchain: ${{ steps.msrv.outputs.msrv }}
+          cache: true
       - name: Build + Test
-        env:
-          MATRIX_RUST_VERSION: ${{ matrix.rust.version }}
         run: |
-          cargo build ${{ matrix.features }}
+          cargo build --all-targets ${{ matrix.features }}
+          cargo test ${{ matrix.features }}
+
+  build-test-stable:
+    name: Build & Test Rust Stable
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os:
+          - ubuntu-latest
+          - ubuntu-24.04-arm
+        features:
+          - --no-default-features
+          - --all-features
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      # This action will honor the Rust compiler version set in rust-toolchain.toml. We aim to keep it in sync with
+      # Rust stable.
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: true
+      - name: Build + Test
+        run: |
+          cargo build --all-targets ${{ matrix.features }}
           cargo test ${{ matrix.features }}
 
   fmt:
@@ -60,38 +75,46 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
       - name: Install Rust toolchain
-        uses: actions-rs/toolchain@v1
+        uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-            toolchain: nightly
-            override: true
-            profile: minimal
-            components: rustfmt
+          toolchain: nightly
+          cache: true
+          components: rustfmt
       - name: Check fmt
-        run: cargo fmt --check
+        run: cargo fmt --all --check
 
   clippy_check:
-    needs: prepare
     name: Rust clippy
     runs-on: ubuntu-latest
-    permissions:
-      checks: write
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions-rs/toolchain@v1
+      # This action automatically reads and applies rust-toolchain.toml
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-            toolchain: ${{ needs.prepare.outputs.rust_version }}
-            components: clippy
-            override: true
-      - name: Rust Cache
-        uses: Swatinem/rust-cache@v2.7.8
-      - uses: actions-rs/clippy-check@v1
+          cache: true
+      - name: Clippy
+        run: cargo clippy --all-features --all-targets -- -D warnings
+
+  docs_check:
+    name: Check cargo doc
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          name: Clippy Results
-          args: --all-features --all-targets -- -D warnings
+          persist-credentials: false
+      # This action automatically reads and applies rust-toolchain.toml
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: true
+      - name: Check docs
+        run: RUSTDOCFLAGS='-D warnings' cargo doc --all-features --no-deps
